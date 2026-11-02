@@ -8,16 +8,20 @@ function moduleSource(name) {
 }
 const search = new Function(moduleSource('search.js') + '\nreturn { clean, resolvePath, rankFiles, isMarkdown, isFolderQuery, searchMatches };')();
 const { folderContext } = new Function(moduleSource('context.js') + '\nreturn { folderContext };')();
+// The vendored parser is one minified ES module; turn its export list into a return value.
+const { Lexer } = new Function(fs.readFileSync(path.join(mod, 'vendor/marked.esm.js'), 'utf8')
+  .replace(/export\{([^}]*)\};?/, (_match, names) => 'return {' + names.replace(/(\w+) as (\w+)/g, '$2: $1') + '};'))();
+if (typeof Lexer?.lex !== 'function') throw new Error('Cannot load the vendored marked lexer');
 
 // Record native element descriptions so tests can use the controls' real handlers.
 // Herdr's check and screenshot commands verify the native rendering separately.
 function element(type, id) {
-  const node = { type, elementId: id, children: [], slots: {}, handlers: {}, styles: {} };
+  const node = { type, elementId: id, kids: [], slots: {}, handlers: {}, styles: {} };
   const proxy = new Proxy(node, { get(target, key) {
     if (key in target) return target[key];
     return (...args) => {
-      if (key === 'child') target.children.push(args[0]);
-      else if (key === 'children') target.children.push(...args[0]);
+      if (key === 'child') target.kids.push(args[0]);
+      else if (key === 'children') target.kids.push(...args[0]);
       else if (key === 'trigger' || key === 'content') target.slots[key] = args[0];
       else if (key === 'when') { if (args[0]) args[1](proxy); }
       else if (key === 'id') target.elementId = args[0];
@@ -29,11 +33,11 @@ function element(type, id) {
   return proxy;
 }
 
-function createReader({ root, properties = {}, focus, fileRead, picker = async () => null, discovery, storage = new Map() } = {}) {
+function createReader({ root, properties = {}, appearance = { dark: true, font_family: 'Mono' }, focus, fileRead, picker = async () => null, discovery, storage = new Map() } = {}) {
   const timers = [], tasks = new Set(), errors = [], commands = [];
   const stop = new Error('stop command listener');
   const cx = {
-    notify() {}, stop_propagation() {},
+    notify() {}, stop_propagation() {}, sleep: async () => {},
     focus_handle: () => ({ focus() {} }),
     timer: { after: (_delay, callback) => timers.push(callback), every() {} },
     spawn(callback) {
@@ -55,21 +59,38 @@ function createReader({ root, properties = {}, focus, fileRead, picker = async (
   };
   const platform = () => ({ platform: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux' });
   const files = new Function('exec', 'window', 'isMarkdown', moduleSource('files.js') + '\nreturn { indexMarkdown, listFolder, skipFolder };')(exec, platform, search.isMarkdown);
+  const editors = [];
+  const EditorState = { new(options) {
+    if (options.language === 'boom') throw new Error('Cannot highlight boom');
+    const editor = { options, released: false, release() { editor.released = true; return true; } };
+    editors.push(editor);
+    return editor;
+  } };
+  const list = (id, count, getKey, render) => {
+    const node = element('list', id);
+    node.keys = Array.from({ length: count }, (_, i) => getKey(i));
+    node.kids.push(...node.keys.map((_key, i) => render(i, cx)));
+    return node;
+  };
+  const markdown = new Function('div', 'list', 'h_flex', 'v_flex', 'Editor', 'EditorState', 'Link', 'Scrollbar', 'Lexer',
+    moduleSource('markdown.js') + '\nreturn { lexDocument, makeCodeViews, releaseCodeViews, documentView };')(
+    () => element('div'), list, () => element('row'), () => element('column'),
+    { new: state => { const node = element('editor'); node.state = state; return node; } }, EditorState,
+    { new: id => element('link', id) }, { vertical: () => element('scrollbar') }, Lexer);
   const bindings = {
     View: class {}, div: () => element('div'), svg: file => element('svg', file),
     h_flex: () => element('row'), v_flex: () => element('column'),
     Button: { new: id => element('button', id) }, Input: { new: () => element('input') }, InputState,
-    TextView: { markdown: (id, text) => { const node = element('markdown', id); node.text = text; return node; } },
     Popover: { new: id => element('popover', id) }, Scrollbar: { vertical: () => element('scrollbar') },
     v_virtual_list: (id, count, _size, getKey, render) => {
       const node = element('list', id);
       node.keys = Array.from({ length: count }, (_, i) => getKey(i));
-      node.children.push(...render({ start: 0, end: count }));
+      node.kids.push(...render({ start: 0, end: count }));
       return node;
     },
     VirtualListScrollHandle: { new: () => ({ scroll_to_item() {} }) },
     shared: key => storage.get(key), setShared: (key, value) => storage.set(key, structuredClone(value)),
-    theme: () => ({}), props: () => properties,
+    theme: () => ({}), settings: () => appearance, props: () => properties, ...markdown,
     focused: () => focus || { cwd: root, tab: 'tab', space: 'space', terminal: 't1' }, panes: () => [],
     spaces: () => [{ id: 'space', active: true, folder: root, machine: null }], home: () => root,
     readTextFile: fileRead || (async file => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } }),
@@ -90,13 +111,13 @@ function createReader({ root, properties = {}, focus, fileRead, picker = async (
   function find(id, node = reader.render()) {
     if (!node || typeof node !== 'object') return null;
     if (node.elementId === id) return node;
-    for (const child of [...node.children, ...Object.values(node.slots)]) {
+    for (const child of [...node.kids, ...Object.values(node.slots)]) {
       const match = find(id, child);
       if (match) return match;
     }
     return null;
   }
-  return { reader, cx, settle, files, search, commands, find,
+  return { reader, cx, settle, files, search, commands, find, editors, markdown, Lexer,
     click: id => { const node = find(id); if (!node) throw new Error('Control not found: ' + id); node.handlers.on_click({}, cx); },
     type: value => { reader.input.set_value(value); reader.input.handlers.change({}, cx); },
   };

@@ -93,17 +93,19 @@ The reader checks an open file every five seconds.
 Ignore stale file, folder, tree, and index results after a newer request or workspace change.
 
 Open in tab carries the file, document machine, workspace folder and machine, text size, and sidebar visibility, then closes the overlay.
-Text selection, copying, Markdown layout, and links use Herdr's renderer.
+The reader draws Markdown itself in GitHub's style; only code blocks support selection and copying.
 MDX components are not executed.
 
 ## Built from
 
 There is no layout file, HTML, CSS, DOM, or browser runtime.
-The main mod is a gpui-kit View with gpui-base InputState, Input, Button, Popover, TextView.markdown, virtual lists, scroll handles, and scrollbars.
+The main mod is a gpui-kit View with gpui-base InputState, Input, Button, Popover, Editor, virtual lists, scroll handles, and scrollbars.
 Virtual list renderers only describe rows; their click handlers belong to the list.
 
 The reader files are:
 
+- markdown.js: Markdown parsing with the vendored marked lexer (vendor/marked.esm.js, MIT) and GitHub-styled native elements in a lazy list.
+  Herdr stops a script slice that runs for about a second, and marked is slow under QuickJS, so documents are lexed in chunks with pauses, and inline text only when a block is drawn.
 - main.js: UI, document loading, lazy tree state, search state, folder selection, and the command listener.
 - context.js: terminal and machine selection.
 - search.js: path cleanup and resolution, filename ranking, and indexed/directory result merging.

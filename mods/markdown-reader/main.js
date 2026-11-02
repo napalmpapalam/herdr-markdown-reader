@@ -1,9 +1,10 @@
 import { View, div, svg } from "gpui-kit";
-import { h_flex, v_flex, Button, Input, InputState, TextView, Popover, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
-import { theme, props, focused, panes, spaces, home, readTextFile, pickFolder, run, closeOverlay, nextCommand, shared, setShared } from "herdr";
+import { h_flex, v_flex, Button, Input, InputState, Popover, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
+import { theme, settings, props, focused, panes, spaces, home, readTextFile, pickFolder, run, closeOverlay, nextCommand, shared, setShared } from "herdr";
 import { indexMarkdown, listFolder, skipFolder } from "./files.js";
 import { clean, resolvePath, rankFiles, isFolderQuery, searchMatches } from "./search.js";
 import { folderContext } from "./context.js";
+import { lexDocument, makeCodeViews, releaseCodeViews, documentView } from "./markdown.js";
 
 function currentFolder() {
   return folderContext(focused(), panes(), spaces(), home());
@@ -20,7 +21,7 @@ Use the **folder indicator** to choose another workspace.
 ## Made for your workflow
 
 - Read documentation beside your terminal.
-- Select and copy text, follow links, and scroll at your own pace.
+- Follow links and scroll at your own pace.
 - Expand folders in the file tree, or hide the sidebar with the **sidebar button**.
 - Open the **kebab menu** to change the text size with **A−** and **A+**.
 - File changes appear automatically, every few seconds.
@@ -46,6 +47,8 @@ Use **Ctrl+Shift+M** to open this reader again.
 Choose **Open in tab** in the kebab menu for a full reading workspace.
 `;
 
+const EMPTY = "*This file is empty.*";
+
 export default class MarkdownReader extends View {
   init(_props, cx) {
     const p = props() || {};
@@ -55,6 +58,7 @@ export default class MarkdownReader extends View {
     this.file = null;
     this.content = WELCOME;
     this.fontSize = Math.max(12, Math.min(23, Number(p.fontSize) || 15));
+    this.doc = null; this.views = null; this.words = 0; this.buildVersion = 0; this.layout = { width: 0 };
     this.request = 0;
     this.loading = false;
     this.error = null;
@@ -79,13 +83,18 @@ export default class MarkdownReader extends View {
     this.folderInput = InputState.new({ placeholder: "Folder path", value: this.base });
     this.folderInput.on("submit", (_e, cx) => this.openFolder(this.folderInput.value(), this.on, cx));
     this.restoreState(cx, p);
+    this.rebuild(cx);
     if (p.file) this.open(p.file, cx, p.fileOn !== undefined ? p.fileOn : this.on);
     else if (clean(p.query)) this.queryChanged(cx);
     this.reindex(cx);
     this.readTree("", cx);
     // Pane creation assigns focus after init; focus the search once it mounts.
     cx.timer.after(1, cx => { this.focusPath(); cx.notify(); });
-    cx.timer.every(5000, cx => { if (this.file && !this.loading) this.load(cx, true); });
+    cx.timer.every(5000, cx => {
+      this.watchBuild(cx);
+      this.rebuild(cx);
+      if (this.file && !this.loading) this.load(cx, true);
+    });
     cx.spawn(async cx => {
       for (;;) {
         const command = await nextCommand();
@@ -124,6 +133,53 @@ export default class MarkdownReader extends View {
     this.rootExpanded = state.rootExpanded !== false;
     for (const path of folders) this.readTree(path, cx);
   }
+
+  style() {
+    const s = settings();
+    return { dark: Boolean(s.dark), fontSize: this.fontSize, fontFamily: s.font_family };
+  }
+
+  // Builds the document outside render when its text, theme or size changes; the newest build wins.
+  // A text change lexes again; a theme, size or font change only makes new code views.
+  rebuild(cx) {
+    const style = this.style(), key = this.loadedFile || "welcome", text = this.content || EMPTY;
+    const want = { text, key, ...style }, last = this.wanted;
+    if (last && Object.keys(want).every(name => last[name] === want[name])) return false;
+    const version = ++this.buildVersion, stale = () => version !== this.buildVersion;
+    this.wanted = want; this.building = true; this.beat = Date.now(); this.buildError = null;
+    cx.spawn(async cx => {
+      const pause = () => { this.beat = Date.now(); return cx.sleep(0); };
+      try {
+        const doc = this.doc?.text === text && this.doc.key === key ? this.doc : await lexDocument(text, key, pause, stale);
+        const views = doc && await makeCodeViews(doc, style, pause, stale);
+        if (!views) return;
+        if (stale()) { releaseCodeViews(views); return; }
+        releaseCodeViews(this.views);
+        this.doc = doc; this.views = views; this.words = this.content ? doc.words : 0;
+      } catch (error) {
+        if (!stale()) this.dropDocument(String(error.message || error));
+      } finally {
+        if (!stale()) { this.building = false; cx.notify(); }
+      }
+    });
+    return true;
+  }
+
+  // Herdr stops a script slice that runs too long, and a stopped build never reaches its `finally`.
+  watchBuild(cx) {
+    if (!this.building || Date.now() - this.beat < 3000) return;
+    this.buildVersion++; this.building = false;
+    this.dropDocument("This document is too large to show.");
+    cx.notify();
+  }
+
+  // Shows why the document is missing, rather than an older one.
+  dropDocument(message) {
+    releaseCodeViews(this.views);
+    this.doc = null; this.views = null; this.buildError = message;
+  }
+
+  async close() { this.buildVersion++; releaseCodeViews(this.views); this.doc = null; this.views = null; }
 
   reindex(cx) {
     const version = ++this.indexVersion, base = this.base, on = this.on;
@@ -190,7 +246,7 @@ export default class MarkdownReader extends View {
 
   resizeText(delta, cx) {
     this.fontSize = Math.max(12, Math.min(23, this.fontSize + delta));
-    this.saveState(); cx.notify();
+    this.rebuild(cx); this.saveState(); cx.notify();
   }
 
   showFolderPicker(cx) {
@@ -231,7 +287,7 @@ export default class MarkdownReader extends View {
         this.tree = new Map(); this.expanded = new Set(); this.rootExpanded = true; this.treeVisible = true; this.fontSize = 15;
         this.folderOpen = false; this.menuOpen = false;
         this.input.set_value(""); this.folderInput.set_value(folder);
-        this.restoreState(cx);
+        this.restoreState(cx); this.rebuild(cx);
         this.readTree("", cx); this.reindex(cx); this.focusPath();
       } catch (error) {
         if (version === this.folderVersion) { this.workspaceError = String(error.message || error); this.folderOpen = true; }
@@ -346,6 +402,7 @@ export default class MarkdownReader extends View {
         this.content = text;
         this.loadedFile = file;
         this.loadedOn = on;
+        this.rebuild(cx);
         if (!quiet) this.saveState();
         this.error = null;
         if (changed || !quiet) cx.notify();
@@ -385,7 +442,7 @@ export default class MarkdownReader extends View {
           .child(this.button("reader-smaller", "A−", (_e, cx) => this.resizeText(-1, cx), false, this.fontSize <= 12).accessibility_label("Decrease text size"))
           .child(div().w(32).text_center().text_size(11).text_color(t.muted).child(this.fontSize + " px"))
           .child(this.button("reader-larger", "A+", (_e, cx) => this.resizeText(1, cx), false, this.fontSize >= 23).accessibility_label("Increase text size")))
-        .child(this.button("reader-size-reset", "Reset text size", (_e, cx) => { this.fontSize = 15; this.saveState(); cx.notify(); }))
+        .child(this.button("reader-size-reset", "Reset text size", (_e, cx) => { this.fontSize = 15; this.rebuild(cx); this.saveState(); cx.notify(); }))
         .child(div().h(1).my(4).bg(t.border))
         .child(this.button("reader-refresh", "Refresh files and document", (_e, cx) => { this.menuOpen = false; this.refresh(cx); }))
         .child(this.button("reader-current-folder", "Use terminal folder", (_e, cx) => {
@@ -489,7 +546,7 @@ export default class MarkdownReader extends View {
 
   render() {
     const t = theme();
-    const words = this.content.trim().split(/\s+/).filter(Boolean).length;
+    const words = this.words;
     return v_flex().id("markdown-reader").size_full().min_h(0).min_w(0).overflow_hidden().bg(t.surface).text_color(t.foreground)
       .track_focus(this.handle)
       .on_size_change((size, cx) => { if (this.width !== size.width) { this.width = size.width; cx.notify(); } })
@@ -503,17 +560,16 @@ export default class MarkdownReader extends View {
         .child(this.folderPicker())
         .child(this.readerMenu()))
       .when(this.showSuggestions, el => el.child(this.searchResults()))
-      .when(Boolean(this.error), el => el.child(v_flex().mx(18).mb(10).p(12).gap(4).rounded(8).bg(t.raised)
+      .when(Boolean(this.error || this.buildError), el => el.child(v_flex().mx(18).mb(10).p(12).gap(4).rounded(8).bg(t.raised)
         .child(div().text_size(12).text_color(t.blocked).child("Could not open this file"))
-        .child(div().text_size(12).text_color(t.muted).child(this.error))))
+        .child(div().text_size(12).text_color(t.muted).child(this.error || this.buildError))))
       .child(h_flex().flex_1().min_h(0).min_w(0).border_t(1).border_color(t.border)
         .when(this.treeVisible, el => el.child(this.fileTree()))
-        .child(div().id("reader-scroll-" + (this.loadedFile || "welcome")).flex_1().min_w(0).min_h(0).h_full().overflow_y_scrollbar().px(this.width && this.width < 650 ? 16 : 28).py(18)
-          .child(v_flex().w_full().max_w(820).mx_auto().gap(12)
-            .when(!this.error, el => el.child(TextView.markdown("reader-document-" + (this.loadedFile || "welcome"), this.content || "*This file is empty.*")
-              .w_full().text_size(this.fontSize).text_color(t.foreground).selectable(true).scrollable(false))))))
+        .child(div().flex_1().min_w(0).min_h(0).h_full()
+          .when(!this.error && Boolean(this.doc), el => el.child(documentView(this.doc, this.views, this.style(), this.layout,
+            "reader-document-" + this.doc.key, this.width && this.width < 650 ? 16 : 28)))))
       .child(h_flex().px(18).py(9).gap(12).items_center().bg(t.chrome).text_size(10).text_color(t.muted)
-        .child(div().flex_1().min_w(0).truncate().tooltip(this.file || this.base).child(this.error ? "UTF-8 text, up to 1 MiB" : this.loading ? "Loading…" : this.file ? this.file.split("/").pop() + " · Live" : "Search files · Ctrl+L"))
+        .child(div().flex_1().min_w(0).truncate().tooltip(this.file || this.base).child(this.error ? "UTF-8 text, up to 1 MiB" : this.loading || (this.building && this.file) ? "Loading…" : this.file ? this.file.split("/").pop() + " · Live" : "Search files · Ctrl+L"))
         .child(div().flex_shrink_0().child(`${words.toLocaleString()} words · ${Math.max(1, Math.ceil(words / 220))} min read`)));
   }
 }
