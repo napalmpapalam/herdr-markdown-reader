@@ -46,7 +46,9 @@ Refresh updates the document, tree, and search index.
 The reader also checks an open file every five seconds.
 **Open in tab**, in the Menu of an overlay reader, keeps the file, folder, machine context, text size, and sidebar visibility.
 
-Text supports selection and copying, and Markdown links use Herdr's renderer.
+Documents are drawn in GitHub's style: its colors, type sizes and spacing, syntax-colored code blocks, tables, and task lists, in dark or light by the app's appearance.
+Code blocks support selection and copying; other text does not.
+Web links open in the browser.
 UTF-8 text files are limited to 1 MiB by Herdr.
 MDX files are read as Markdown; components are not executed.
 
