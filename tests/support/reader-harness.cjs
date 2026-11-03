@@ -75,9 +75,9 @@ function createReader({ root, properties = {}, appearance = { dark: true, font_f
     node.kids.push(...node.keys.map((_key, i) => render(i, cx)));
     return node;
   };
-  const markdown = new Function('div', 'list', 'h_flex', 'v_flex', 'Link', 'Scrollbar', 'languageOf', 'tokenize', 'Lexer',
+  const markdown = new Function('div', 'list', 'svg', 'h_flex', 'v_flex', 'Link', 'Scrollbar', 'languageOf', 'tokenize', 'Lexer',
     moduleSource('markdown.js') + '\nreturn { lexDocument, documentView };')(
-    () => element('div'), list, () => element('row'), () => element('column'),
+    () => element('div'), list, file => element('svg', file), () => element('row'), () => element('column'),
     { new: id => element('link', id) }, { vertical: () => element('scrollbar') }, highlight.languageOf, highlight.tokenize, BoomLexer);
   const bindings = {
     View: class {}, div: () => element('div'), svg: file => element('svg', file), image: file => element('image', file),
