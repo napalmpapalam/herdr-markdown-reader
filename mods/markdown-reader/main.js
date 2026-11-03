@@ -1,9 +1,10 @@
-import { View, div, svg } from "gpui-kit";
+import { View, div, svg, image } from "gpui-kit";
 import { h_flex, v_flex, Button, Input, InputState, Popover, v_virtual_list, Scrollbar, VirtualListScrollHandle } from "gpui-base";
 import { theme, settings, props, focused, panes, spaces, home, readTextFile, pickFolder, run, closeOverlay, nextCommand, shared, setShared } from "herdr";
 import { indexMarkdown, listFolder, skipFolder } from "./files.js";
 import { clean, resolvePath, rankFiles, isFolderQuery, searchMatches } from "./search.js";
 import { folderContext } from "./context.js";
+import { iconFile } from "./icons.js";
 import { lexDocument, makeCodeViews, releaseCodeViews, documentView } from "./markdown.js";
 
 function currentFolder() {
@@ -495,7 +496,7 @@ export default class MarkdownReader extends View {
   }
 
   fileTree() {
-    const t = theme(), rows = this.rootExpanded ? this.treeRows() : [];
+    const t = theme(), dark = Boolean(settings().dark), rows = this.rootExpanded ? this.treeRows() : [];
     const width = this.width && this.width < 650 ? 180 : 222;
     const rootName = this.base.replace(/\/$/, "").split("/").pop() || this.base;
     return v_flex().id("reader-sidebar").w(width).min_w(0).h_full().flex_shrink_0().bg(t.chrome).border_r(1).border_color(t.border)
@@ -509,10 +510,12 @@ export default class MarkdownReader extends View {
         .mx(6).w(width - 12).min_w(0).tooltip(this.base))
       .child(div().relative().flex_1().min_h(0).mt(4)
         .child(v_virtual_list("reader-tree", rows.length, 30, index => rows[index].key, range => rows.slice(range.start, range.end).map(row => {
-          const active = this.fileOn === this.on && this.file === resolvePath(row.path, this.base, null);
+          const active = this.fileOn === this.on && this.file === resolvePath(row.path, this.base, null), open = row.dir && this.expanded.has(row.path);
           return h_flex().h(30).pl(12 + Math.min(row.depth, 12) * 14).pr(10).gap(6).items_center().cursor_pointer()
             .bg(active ? t.selected : t.chrome).hover(style => style.bg(t.hover)).text_size(12).text_color(row.message ? t.muted : t.foreground)
-            .when(!row.message, el => el.child(svg("mods/markdown-reader/" + (row.dir ? (this.expanded.has(row.path) ? "chevron-down.svg" : "chevron-right.svg") : "file.svg")).size(13).flex_shrink_0().text_color(row.dir ? t.muted : t.accent)))
+            .when(!row.message, el => el
+              .child(row.dir ? svg("mods/markdown-reader/chevron-" + (open ? "down" : "right") + ".svg").size(13).flex_shrink_0().text_color(t.muted) : div().w(13).flex_shrink_0())
+              .child(image(iconFile(row.path, row.dir, open, dark)).size(16).flex_shrink_0()))
             .child(div().flex_1().min_w(0).truncate().child(row.message || row.name));
         })).flex_1().size_full().track_scroll(this.treeScroll).on_item_click((key, cx) => {
           const row = rows.find(row => row.key === key);
@@ -524,7 +527,7 @@ export default class MarkdownReader extends View {
   }
 
   searchResults() {
-    const t = theme(), matches = this.matches;
+    const t = theme(), dark = Boolean(settings().dark), matches = this.matches;
     return v_flex().mx(14).mb(8).p(6).gap(2).rounded(8).border_1().border_color(t.border).bg(t.raised)
       .h(40 + Math.max(1, Math.min(6, matches.length)) * 40).flex_shrink_0().id("reader-suggestions")
       .child(div().px(7).py(4).text_size(10).text_color(t.muted).truncate().child(
@@ -534,7 +537,7 @@ export default class MarkdownReader extends View {
           const index = range.start + offset, slash = entry.path.lastIndexOf("/");
           return h_flex().h(40).px(8).gap(8).items_center().rounded(5).cursor_pointer()
             .bg(index === this.selected ? t.selected : t.raised).hover(style => style.bg(t.hover))
-            .child(div().w(26).text_size(9).text_color(t.accent).child(entry.dir ? "DIR" : "MD"))
+            .child(image(iconFile(entry.path, entry.dir, false, dark)).size(16).flex_shrink_0())
             .child(v_flex().flex_1().min_w(0).gap(2)
               .child(div().text_size(12).truncate().text_color(t.foreground).child(entry.path.slice(slash + 1) + (entry.dir ? "/" : "")))
               .child(div().text_size(10).truncate().text_color(t.muted).child(slash < 0 ? "Workspace folder" : entry.path.slice(0, slash))));

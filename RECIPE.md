@@ -26,12 +26,14 @@ Browse opens the system folder picker.
 The file tree is 222 px wide, or 180 px when the reader is narrower than 650 px.
 It has a Files label, a kebab menu with Collapse all folders, and a collapsible root folder.
 Folders sort before files and have expand/collapse arrows.
-Markdown files have document icons; the open file has a selected background.
+Each row has a Material Icon Theme icon after the arrow: a named folder icon such as docs, open while expanded, or a Markdown file icon such as readme, changelog, or markdown.
+A light appearance uses the theme's light variants.
+The open file has a selected background.
 A footer gives the indexed file count.
 Tree and document scroll independently.
 
 Search results appear above the reading area only while a non-empty query is active.
-Each result has a filename and parent folder.
+Each result has a Material Icon Theme icon, a filename, and a parent folder.
 The list holds up to 50 results and shows up to six rows before scrolling.
 The selected result has a highlighted background.
 Errors appear in the folder popover or above the document.
@@ -110,7 +112,10 @@ The reader files are:
 - context.js: terminal and machine selection.
 - search.js: path cleanup and resolution, filename ranking, and indexed/directory result merging.
 - files.js: rg indexing, Windows fallback, and immediate directory listings.
-- book.svg, file.svg, chevron-right.svg, and chevron-down.svg: native UI icons.
+- icons.js: Material Icon Theme's lookup (path rule, then name, then the longest extension; light table first in a light appearance).
+- vendor/material-icon-theme/: the folder and Markdown icons, a lookup table trimmed to them, and the theme's MIT license.
+  tools/build-icons.mjs generates them from material-icon-theme 5.40.0; image() draws them in full color.
+- book.svg, chevron-right.svg, and chevron-down.svg: native UI icons.
 - mod.json: place:none and dialog dimensions.
 
 Herdr APIs include theme, props, focused, panes, spaces, home, readTextFile, pickFolder, exec, window, run, closeOverlay, and nextCommand.

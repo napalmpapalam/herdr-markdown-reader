@@ -8,6 +8,8 @@ function moduleSource(name) {
 }
 const search = new Function(moduleSource('search.js') + '\nreturn { clean, resolvePath, rankFiles, isMarkdown, isFolderQuery, searchMatches };')();
 const { folderContext } = new Function(moduleSource('context.js') + '\nreturn { folderContext };')();
+const ICONS = new Function(moduleSource('vendor/material-icon-theme/table.js').replace(/^default /m, 'return '))();
+const { iconFile } = new Function('ICONS', moduleSource('icons.js') + '\nreturn { iconFile };')(ICONS);
 // The vendored parser is one minified ES module; turn its export list into a return value.
 const { Lexer } = new Function(fs.readFileSync(path.join(mod, 'vendor/marked.esm.js'), 'utf8')
   .replace(/export\{([^}]*)\};?/, (_match, names) => 'return {' + names.replace(/(\w+) as (\w+)/g, '$2: $1') + '};'))();
@@ -78,7 +80,7 @@ function createReader({ root, properties = {}, appearance = { dark: true, font_f
     { new: state => { const node = element('editor'); node.state = state; return node; } }, EditorState,
     { new: id => element('link', id) }, { vertical: () => element('scrollbar') }, Lexer);
   const bindings = {
-    View: class {}, div: () => element('div'), svg: file => element('svg', file),
+    View: class {}, div: () => element('div'), svg: file => element('svg', file), image: file => element('image', file),
     h_flex: () => element('row'), v_flex: () => element('column'),
     Button: { new: id => element('button', id) }, Input: { new: () => element('input') }, InputState,
     Popover: { new: id => element('popover', id) }, Scrollbar: { vertical: () => element('scrollbar') },
@@ -95,7 +97,7 @@ function createReader({ root, properties = {}, appearance = { dark: true, font_f
     spaces: () => [{ id: 'space', active: true, folder: root, machine: null }], home: () => root,
     readTextFile: fileRead || (async file => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } }),
     pickFolder: picker, run: (name, args) => commands.push({ name, args }), closeOverlay: id => commands.push({ close: id }),
-    nextCommand: async () => { throw stop; }, ...search, ...files, ...discovery, folderContext,
+    nextCommand: async () => { throw stop; }, ...search, ...files, ...discovery, folderContext, iconFile,
   };
   const source = moduleSource('main.js').replace('default class MarkdownReader', 'return class MarkdownReader');
   const Reader = new Function(...Object.keys(bindings), source)(...Object.values(bindings));
@@ -123,4 +125,4 @@ function createReader({ root, properties = {}, appearance = { dark: true, font_f
   };
 }
 
-module.exports = { createReader, search, folderContext };
+module.exports = { createReader, search, folderContext, iconFile, ICONS };

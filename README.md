@@ -93,5 +93,11 @@ Run `herdr-app check` on both mod folders and inspect the controls in the runnin
 On Windows, setting `READER_TEST_SH` to a POSIX shell executable (or busybox.exe) also tests the Unix listing branch in `tests/folders.test.cjs`.
 Node.js is needed only for development tests, not to use the mod.
 
+## Icons
+
+The file tree and search results use icons from [Material Icon Theme](https://github.com/material-extensions/vscode-material-icon-theme) 5.40.0 (MIT): every folder icon and the Markdown file icons.
+They live in `mods/markdown-reader/vendor/material-icon-theme/`, with the theme's license.
+To vendor them again, run `node tools/build-icons.mjs` from the repository root; it needs npm and tar.
+
 See [RECIPE.md](RECIPE.md) for the build brief.
 No personal layouts, settings, saved state, or documents are included.
