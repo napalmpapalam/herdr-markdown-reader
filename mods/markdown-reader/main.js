@@ -4,7 +4,7 @@ import { theme, settings, props, focused, panes, spaces, home, readTextFile, pic
 import { indexMarkdown, listFolder, skipFolder } from "./files.js";
 import { clean, resolvePath, rankFiles, isFolderQuery, searchMatches } from "./search.js";
 import { folderContext } from "./context.js";
-import { lexDocument, makeCodeViews, releaseCodeViews, documentView } from "./markdown.js";
+import { lexDocument, documentView } from "./markdown.js";
 
 function currentFolder() {
   return folderContext(focused(), panes(), spaces(), home());
@@ -58,7 +58,7 @@ export default class MarkdownReader extends View {
     this.file = null;
     this.content = WELCOME;
     this.fontSize = Math.max(12, Math.min(23, Number(p.fontSize) || 15));
-    this.doc = null; this.views = null; this.words = 0; this.buildVersion = 0; this.layout = { width: 0 };
+    this.doc = null; this.words = 0; this.buildVersion = 0;
     this.request = 0;
     this.loading = false;
     this.error = null;
@@ -140,7 +140,7 @@ export default class MarkdownReader extends View {
   }
 
   // Builds the document outside render when its text, theme or size changes; the newest build wins.
-  // A text change lexes again; a theme, size or font change only makes new code views.
+  // A text change lexes again; a theme, size or font change only draws again.
   rebuild(cx) {
     const style = this.style(), key = this.loadedFile || "welcome", text = this.content || EMPTY;
     const want = { text, key, ...style }, last = this.wanted;
@@ -151,11 +151,8 @@ export default class MarkdownReader extends View {
       const pause = () => { this.beat = Date.now(); return cx.sleep(0); };
       try {
         const doc = this.doc?.text === text && this.doc.key === key ? this.doc : await lexDocument(text, key, pause, stale);
-        const views = doc && await makeCodeViews(doc, style, pause, stale);
-        if (!views) return;
-        if (stale()) { releaseCodeViews(views); return; }
-        releaseCodeViews(this.views);
-        this.doc = doc; this.views = views; this.words = this.content ? doc.words : 0;
+        if (!doc || stale()) return;
+        this.doc = doc; this.words = this.content ? doc.words : 0;
       } catch (error) {
         if (!stale()) this.dropDocument(String(error.message || error));
       } finally {
@@ -175,11 +172,10 @@ export default class MarkdownReader extends View {
 
   // Shows why the document is missing, rather than an older one.
   dropDocument(message) {
-    releaseCodeViews(this.views);
-    this.doc = null; this.views = null; this.buildError = message;
+    this.doc = null; this.buildError = message;
   }
 
-  async close() { this.buildVersion++; releaseCodeViews(this.views); this.doc = null; this.views = null; }
+  async close() { this.buildVersion++; this.doc = null; }
 
   reindex(cx) {
     const version = ++this.indexVersion, base = this.base, on = this.on;
@@ -566,7 +562,7 @@ export default class MarkdownReader extends View {
       .child(h_flex().flex_1().min_h(0).min_w(0).border_t(1).border_color(t.border)
         .when(this.treeVisible, el => el.child(this.fileTree()))
         .child(div().flex_1().min_w(0).min_h(0).h_full()
-          .when(!this.error && Boolean(this.doc), el => el.child(documentView(this.doc, this.views, this.style(), this.layout,
+          .when(!this.error && Boolean(this.doc), el => el.child(documentView(this.doc, this.style(),
             "reader-document-" + this.doc.key, this.width && this.width < 650 ? 16 : 28)))))
       .child(h_flex().px(18).py(9).gap(12).items_center().bg(t.chrome).text_size(10).text_color(t.muted)
         .child(div().flex_1().min_w(0).truncate().tooltip(this.file || this.base).child(this.error ? "UTF-8 text, up to 1 MiB" : this.loading || (this.building && this.file) ? "Loading…" : this.file ? this.file.split("/").pop() + " · Live" : "Search files · Ctrl+L"))

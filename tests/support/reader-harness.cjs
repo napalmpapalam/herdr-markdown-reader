@@ -12,6 +12,14 @@ const { folderContext } = new Function(moduleSource('context.js') + '\nreturn { 
 const { Lexer } = new Function(fs.readFileSync(path.join(mod, 'vendor/marked.esm.js'), 'utf8')
   .replace(/export\{([^}]*)\};?/, (_match, names) => 'return {' + names.replace(/(\w+) as (\w+)/g, '$2: $1') + '};'))();
 if (typeof Lexer?.lex !== 'function') throw new Error('Cannot load the vendored marked lexer');
+const highlight = new Function(moduleSource('highlight.js') + '\nreturn { languageOf, tokenize };')();
+// Fails on a `boom` fence, so tests can reach the reader's build-error path.
+class BoomLexer extends Lexer {
+  blockTokens(source, tokens, ...rest) {
+    if (source.includes('```boom')) throw new Error('Cannot lex boom');
+    return super.blockTokens(source, tokens, ...rest);
+  }
+}
 
 // Record native element descriptions so tests can use the controls' real handlers.
 // Herdr's check and screenshot commands verify the native rendering separately.
@@ -59,24 +67,16 @@ function createReader({ root, properties = {}, appearance = { dark: true, font_f
   };
   const platform = () => ({ platform: process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux' });
   const files = new Function('exec', 'window', 'isMarkdown', moduleSource('files.js') + '\nreturn { indexMarkdown, listFolder, skipFolder };')(exec, platform, search.isMarkdown);
-  const editors = [];
-  const EditorState = { new(options) {
-    if (options.language === 'boom') throw new Error('Cannot highlight boom');
-    const editor = { options, released: false, release() { editor.released = true; return true; } };
-    editors.push(editor);
-    return editor;
-  } };
   const list = (id, count, getKey, render) => {
     const node = element('list', id);
     node.keys = Array.from({ length: count }, (_, i) => getKey(i));
     node.kids.push(...node.keys.map((_key, i) => render(i, cx)));
     return node;
   };
-  const markdown = new Function('div', 'list', 'h_flex', 'v_flex', 'Editor', 'EditorState', 'Link', 'Scrollbar', 'Lexer',
-    moduleSource('markdown.js') + '\nreturn { lexDocument, makeCodeViews, releaseCodeViews, documentView };')(
+  const markdown = new Function('div', 'list', 'h_flex', 'v_flex', 'Link', 'Scrollbar', 'languageOf', 'tokenize', 'Lexer',
+    moduleSource('markdown.js') + '\nreturn { lexDocument, documentView };')(
     () => element('div'), list, () => element('row'), () => element('column'),
-    { new: state => { const node = element('editor'); node.state = state; return node; } }, EditorState,
-    { new: id => element('link', id) }, { vertical: () => element('scrollbar') }, Lexer);
+    { new: id => element('link', id) }, { vertical: () => element('scrollbar') }, highlight.languageOf, highlight.tokenize, BoomLexer);
   const bindings = {
     View: class {}, div: () => element('div'), svg: file => element('svg', file),
     h_flex: () => element('row'), v_flex: () => element('column'),
@@ -117,7 +117,7 @@ function createReader({ root, properties = {}, appearance = { dark: true, font_f
     }
     return null;
   }
-  return { reader, cx, settle, files, search, commands, find, editors, markdown, Lexer,
+  return { reader, cx, settle, files, search, commands, find, markdown, Lexer,
     click: id => { const node = find(id); if (!node) throw new Error('Control not found: ' + id); node.handlers.on_click({}, cx); },
     type: value => { reader.input.set_value(value); reader.input.handlers.change({}, cx); },
   };
