@@ -498,7 +498,7 @@ export default class MarkdownReader extends View {
     const t = theme(), rows = this.rootExpanded ? this.treeRows() : [];
     const width = this.width && this.width < 650 ? 180 : 222;
     const rootName = this.base.replace(/\/$/, "").split("/").pop() || this.base;
-    return v_flex().id("reader-sidebar").w(width).min_w(0).h_full().flex_shrink_0().bg(t.chrome).border_r(1).border_color(t.border)
+    return v_flex().id("reader-sidebar").w(width).min_w(0).h_full().flex_shrink_0().bg(t.chrome).border_l(1).border_color(t.border)
       .child(h_flex().px(12).h(38).flex_shrink_0().items_center().gap(8)
         .child(div().flex_1().text_size(10).font_semibold().text_color(t.muted).child("FILES"))
         .child(Popover.new("reader-tree-menu").anchor("top_right")
@@ -553,21 +553,22 @@ export default class MarkdownReader extends View {
       .on_key_down((event, cx) => this.key(event, cx))
       .on_drop((event, cx) => { if (event.paths?.length) this.open(event.paths[0], cx, null); })
       .child(h_flex().px(12).py(10).gap(8).min_w(0).items_center().flex_shrink_0()
-        .child(this.iconButton("reader-toggle-tree", "sidebar", this.treeVisible ? "Hide file tree" : "Show file tree", (_e, cx) => { this.treeVisible = !this.treeVisible; this.saveState(); cx.notify(); })
-          .text_color(this.treeVisible ? t.foreground : t.muted))
         .child(Input.new(this.input).flex_1().min_w(0).h(32).px(10).rounded(7).border_1()
           .border_color(this.inputFocused ? t.accent : t.input).bg(t.background).text_color(t.foreground).text_size(12).accessibility_label("Search files"))
         .child(this.folderPicker())
-        .child(this.readerMenu()))
+        .child(this.readerMenu())
+        // The file tree is on the right, so its button is too.
+        .child(this.iconButton("reader-toggle-tree", "sidebar", this.treeVisible ? "Hide file tree" : "Show file tree", (_e, cx) => { this.treeVisible = !this.treeVisible; this.saveState(); cx.notify(); })
+          .text_color(this.treeVisible ? t.foreground : t.muted)))
       .when(this.showSuggestions, el => el.child(this.searchResults()))
       .when(Boolean(this.error || this.buildError), el => el.child(v_flex().mx(18).mb(10).p(12).gap(4).rounded(8).bg(t.raised)
         .child(div().text_size(12).text_color(t.blocked).child("Could not open this file"))
         .child(div().text_size(12).text_color(t.muted).child(this.error || this.buildError))))
       .child(h_flex().flex_1().min_h(0).min_w(0).border_t(1).border_color(t.border)
-        .when(this.treeVisible, el => el.child(this.fileTree()))
         .child(div().flex_1().min_w(0).min_h(0).h_full()
           .when(!this.error && Boolean(this.doc), el => el.child(documentView(this.doc, this.views, this.style(), this.layout,
-            "reader-document-" + this.doc.key, this.width && this.width < 650 ? 16 : 28)))))
+            "reader-document-" + this.doc.key, this.width && this.width < 650 ? 16 : 28))))
+        .when(this.treeVisible, el => el.child(this.fileTree())))
       .child(h_flex().px(18).py(9).gap(12).items_center().bg(t.chrome).text_size(10).text_color(t.muted)
         .child(div().flex_1().min_w(0).truncate().tooltip(this.file || this.base).child(this.error ? "UTF-8 text, up to 1 MiB" : this.loading || (this.building && this.file) ? "Loading…" : this.file ? this.file.split("/").pop() + " · Live" : "Search files · Ctrl+L"))
         .child(div().flex_shrink_0().child(`${words.toLocaleString()} words · ${Math.max(1, Math.ceil(words / 220))} min read`)));

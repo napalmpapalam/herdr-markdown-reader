@@ -7,11 +7,11 @@ It starts in the selected terminal's folder and provides an expandable file tree
 
 ## What you see
 
-The dialog is 920 px wide and 85% of the window height.
+The dialog is 90% of the window width and 85% of its height.
 A tab or split pane fills its available space.
 All surfaces, borders, and text use Herdr theme colors.
 
-A single compact toolbar contains an icon button for the sidebar, a search field, a folder indicator, and a kebab menu.
+A single compact toolbar contains a search field, a folder indicator, a kebab menu, and an icon button for the sidebar.
 There is no title banner or full folder path row.
 The folder indicator shows a folder icon and the root folder name, with the full path in its tooltip.
 In narrow panes it shows only the folder icon.
@@ -23,7 +23,7 @@ Text starts at 15 px and can be changed from 12 to 23 px.
 Open folder shows a native popover with a folder path field, Open, and Browse this computer.
 Browse opens the system folder picker.
 
-The file tree is 222 px wide, or 180 px when the reader is narrower than 650 px.
+The file tree is on the right of the document, 222 px wide, or 180 px when the reader is narrower than 650 px.
 It has a Files label, a kebab menu with Collapse all folders, and a collapsible root folder.
 Folders sort before files and have expand/collapse arrows.
 Markdown files have document icons; the open file has a selected background.
