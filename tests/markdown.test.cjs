@@ -81,61 +81,55 @@ test('draws task lists, ordered markers and table cells', async t => {
   assert.ok(word(app, 'A') && word(app, '2'));
 });
 
-test('gives fenced code a highlighted read-only view and releases it on change', async t => {
-  const app = await open(t, '```ts\nconst a = 1;\n```');
-  const editor = app.editors.at(-1);
-  assert.deepEqual([editor.options.language, editor.options.value, editor.options.readonly], ['js', 'const a = 1;', true]);
-  assert.deepEqual(nodes(app, node => node.type === 'editor').map(node => node.state), [editor]);
-  fs.writeFileSync(path.join(app.root, 'doc.md'), 'No code now.');
-  app.reader.load(app.cx); await app.settle();
-  assert.equal(editor.released, true);
-  assert.equal(nodes(app, node => node.type === 'editor').length, 0);
+// A code block is the box with the code background; dark is the harness default.
+const codeBlocks = app => nodes(app, node => node.styles.bg === '#151b23');
+
+test('draws fenced code as rows of syntax-colored text', async t => {
+  const app = await open(t, '```ts\nconst a = 1;\n\n// done\n```\n\n- item\n\n  ```\n  nested\n  ```');
+  assert.equal(word(app, 'const').styles.text_color, '#ff7b72');
+  assert.deepEqual([word(app, '// ').styles.text_color, word(app, 'done').styles.text_color], ['#9198a1', '#9198a1']);
+  const [block] = codeBlocks(app);
+  assert.equal(block.kids.length, 3);
+  assert.deepEqual([block.kids[1].kids.length, block.kids[1].styles.min_h], [0, 20]);
+  assert.ok(word(app, 'nested'));
 });
 
-test('sizes a code view to the rows its soft wrap makes at the measured width', async t => {
-  const app = await open(t, '```\naaaa bbbb cccc dddd eeee ffff\n```');
-  const area = () => app.find('reader-document-' + app.reader.loadedFile + '-area');
-  const height = () => nodes(app, node => node.type === 'editor')[0].styles.h;
-  assert.equal(app.editors.at(-1).options.soft_wrap, true);
-  assert.equal(height(), 20);
-  // 15 px text: 13 px code at a 7.8 px advance fits 22 columns inside 28 px page and 15 px block padding.
-  area().handlers.on_size_change({ width: 56 + 30 + 7.8 * 22 }, app.cx);
-  assert.equal(height(), 40);
+test('draws a code line longer than the tokenizer reads once', async t => {
+  const line = 'const s = "' + 'a'.repeat(700) + '"; done';
+  const app = await open(t, '```js\n' + line + '\n```');
+  assert.equal(codeBlocks(app)[0].kids[0].kids.map(text).join(''), line);
+});
+
+test('splits a long code block into list items that draw as one block', async t => {
+  const lines = Array.from({ length: 130 }, (_, i) => `line ${i}`).join('\n');
+  const app = await open(t, '```\n' + lines + '\n```');
+  assert.deepEqual(app.reader.doc.items.filter(item => item.code).map(item => item.from), [0, 60, 120]);
+  const blocks = codeBlocks(app);
+  assert.deepEqual(blocks.map(block => block.kids.length), [60, 60, 10]);
+  assert.deepEqual(blocks.map(block => ['rounded_t' in block.styles, 'rounded_b' in block.styles]), [[true, false], [false, false], [false, true]]);
 });
 
 test('lexes long documents in chunks without breaking fences or reference links', async t => {
   const filler = Array.from({ length: 40 }, (_, i) => `Paragraph ${i} with some words to fill the chunk.`).join('\n\n');
   const app = await open(t, `See [the site][ref].\n\n${filler}\n\n\`\`\`\nfirst\n\nNot a heading\n\`\`\`\n\n${filler}\n\n[ref]: https://example.com`);
   assert.equal(word(app, 'site').styles.href, 'https://example.com');
-  assert.equal(app.editors.at(-1).options.value, 'first\n\nNot a heading');
+  assert.equal(app.reader.doc.items.find(item => item.code).code.text, 'first\n\nNot a heading');
   assert.equal(app.reader.words, 3 + 2 * 40 * 9 + 6 + 2);
 });
 
-test('rebuilds code views at the new text size', async t => {
+test('draws code at the new text size', async t => {
   const app = await open(t, '```\nx\n```');
-  const before = app.editors.at(-1);
   app.reader.resizeText(1, app.cx); await app.settle();
-  assert.equal(before.released, true);
-  assert.equal(app.editors.at(-1).options.font_size, 14);
+  assert.deepEqual([codeBlocks(app)[0].styles.text_size, codeBlocks(app)[0].kids[0].styles.min_h], [14, 21]);
 });
 
-test('rebuilds code views with the light palette when the appearance changes', async t => {
+test('draws code with the light palette when the appearance changes', async t => {
   const appearance = { dark: true, font_family: 'Mono' };
-  const app = await open(t, '```\nx\n```', { appearance });
-  const dark = app.editors.at(-1);
+  const app = await open(t, '```js\nconst x\n```', { appearance });
   appearance.dark = false;
   assert.equal(app.reader.rebuild(app.cx), true); await app.settle();
-  assert.equal(dark.released, true);
-  assert.equal(app.editors.at(-1).options.syntax.keyword, '#cf222e');
+  assert.equal(word(app, 'const').styles.text_color, '#cf222e');
   assert.equal(app.reader.rebuild(app.cx), false);
-});
-
-test('keeps the measured width for code views across rebuilds', async t => {
-  const app = await open(t, '```\naaaa bbbb cccc dddd eeee ffff\n```');
-  app.find('reader-document-' + app.reader.loadedFile + '-area').handlers.on_size_change({ width: 56 + 30 + 7.8 * 22 }, app.cx);
-  app.reader.resizeText(1, app.cx); await app.settle();
-  app.reader.resizeText(-1, app.cx); await app.settle();
-  assert.equal(nodes(app, node => node.type === 'editor')[0].styles.h, 40);
 });
 
 test('keeps a build error through background reloads instead of an older document', async t => {
@@ -143,7 +137,7 @@ test('keeps a build error through background reloads instead of an older documen
   fs.writeFileSync(path.join(app.root, 'doc.md'), '```boom\nx\n```');
   app.reader.load(app.cx); await app.settle();
   app.reader.load(app.cx, true); await app.settle();
-  assert.equal(app.reader.buildError, 'Cannot highlight boom');
+  assert.equal(app.reader.buildError, 'Cannot lex boom');
   assert.equal(app.reader.doc, null);
   assert.equal(app.find('reader-document-' + app.reader.loadedFile + '-area'), null);
 });
@@ -163,7 +157,7 @@ test('keeps a long list numbered from one whole across chunk boundaries', async 
 test('shows a region too long to lex in one slice as plain text pieces', async t => {
   const rows = Array.from({ length: 400 }, (_, i) => `| row ${i} | some cell text here | more |`).join('\n');
   const app = await open(t, `| a | b | c |\n| - | - | - |\n${rows}`);
-  assert.equal(nodes(app, node => node.type === 'editor').length, Math.ceil(402 / 60));
+  assert.equal(app.reader.doc.items.filter(item => item.code).length, Math.ceil(402 / 60));
   assert.equal(word(app, 'row'), undefined);
 });
 
@@ -175,7 +169,8 @@ test('drops a build that a newer one replaced', async t => {
   app.reader.content = 'B\n\n```\nb\n```'; app.reader.rebuild(app.cx);
   await app.settle();
   assert.equal(app.reader.doc.text, 'B\n\n```\nb\n```');
-  assert.ok(app.editors.filter(editor => !editor.released).every(editor => editor.options.value === 'b'));
+  assert.ok(word(app, 'b'));
+  assert.equal(word(app, 'a'), undefined);
 });
 
 test('lexes in chunks exactly as marked lexes the whole text', async t => {

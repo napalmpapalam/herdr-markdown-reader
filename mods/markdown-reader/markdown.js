@@ -1,6 +1,7 @@
 // Draws a Markdown document as native elements in GitHub's style.
 import { div, list } from "gpui-kit";
-import { h_flex, v_flex, Editor, EditorState, Link, Scrollbar } from "gpui-base";
+import { h_flex, v_flex, Link, Scrollbar } from "gpui-base";
+import { languageOf, tokenize } from "./highlight.js";
 import { Lexer } from "./vendor/marked.esm.js";
 
 // GitHub's own colors (github-markdown-css), so documents look like github.com.
@@ -9,27 +10,20 @@ const PALETTE = {
     fg: "#f0f6fc", muted: "#9198a1", accent: "#4493f8", canvas: "#0d1117", subtle: "#151b23",
     code: "#656c7633", border: "#3d444d", borderMuted: "#3d444db3", checked: "#1f6feb",
     syntax: { keyword: "#ff7b72", string: "#a5d6ff", comment: "#9198a1", function: "#d2a8ff", type: "#ffa657",
-      number: "#79c0ff", constant: "#79c0ff", boolean: "#79c0ff", variable: "#ffa657", operator: "#ff7b72" },
+      number: "#79c0ff", boolean: "#79c0ff", variable: "#ffa657" },
   },
   light: {
     fg: "#1f2328", muted: "#59636e", accent: "#0969da", canvas: "#ffffff", subtle: "#f6f8fa",
     code: "#818b981f", border: "#d1d9e0", borderMuted: "#d1d9e0b3", checked: "#0969da",
     syntax: { keyword: "#cf222e", string: "#0a3069", comment: "#59636e", function: "#6639ba", type: "#953800",
-      number: "#0550ae", constant: "#0550ae", boolean: "#0550ae", variable: "#953800", operator: "#cf222e" },
+      number: "#0550ae", boolean: "#0550ae", variable: "#953800" },
   },
-};
-
-// Fence names mapped to the Editor's grammar names.
-const LANGUAGES = {
-  javascript: "js", jsx: "js", ts: "js", typescript: "js", tsx: "js", mjs: "js", cjs: "js",
-  sh: "bash", shell: "bash", zsh: "bash", console: "bash", yml: "yaml", toml: "yaml", rs: "rust",
-  py: "python", rb: "ruby", golang: "go", jsonc: "json", md: "markdown", htm: "html", xml: "html",
 };
 
 // GitHub's -apple-system stack. The app's default UI font may ship one face only, which drops bold and italic.
 const PROSE_FONT = ".SystemUIFont";
-// The code view's row height (measured, rounded to whole pixels like GPUI) and a monospace advance.
-const CODE_LINE = 1.5, MONO_ADVANCE = 0.6;
+// Code rows per list item, so a long block costs only its visible part.
+const CODE_LINES = 60;
 const codeSize = fontSize => Math.round(fontSize * 0.85);
 const MAX_WIDTH = 820, EDGE = 18, SLICE_MS = 30;
 const HEADING_SIZES = [2, 1.5, 1.25, 1, 0.875, 0.85];
@@ -81,7 +75,7 @@ function* chunks(text) {
 // shared; pause between slices; and leave inline text to `inlined`, for the blocks that get drawn.
 // A region that stays longer than HARD, or inline text longer than INLINE, is shown as plain text.
 // Resolves to null once `stale()` is true.
-const HARD = 16000, INLINE = 8000, PLAIN_LINES = 60;
+const HARD = 16000, INLINE = 8000;
 export async function lexDocument(text, key, pause, stale) {
   const lexer = new Lexer({ gfm: true }), slice = { at: Date.now() };
   let words = 0, carry = "";
@@ -96,12 +90,10 @@ export async function lexDocument(text, key, pause, stale) {
     else next.tokens.pending = next.src;
   }
   lexer.inlineQueue = [];
-  const code = [];
   visit(lexer.tokens, token => {
     if (token.type === "table") token.weights = columnWeights(token);
-    if (token.type === "code") code.push(token);
   });
-  return { items: documentItems(lexer.tokens), lexer, code, words, text, key };
+  return { items: documentItems(lexer.tokens), lexer, words, text, key };
 }
 
 async function breathe(slice, pause, stale) {
@@ -136,34 +128,10 @@ function unclosed(token) {
     || (raw.startsWith("<![CDATA[") && !raw.includes("]]>")) || (/^<![A-Za-z]/.test(raw) && !raw.includes(">"));
 }
 
-// Too long to lex in one slice: monospaced text, PLAIN_LINES rows per item.
+// Too long to lex in one slice: monospaced text.
 function plain(tokens, source) {
-  const lines = source.replace(/\n+$/, "").split("\n");
-  for (let i = 0; i < lines.length; i += PLAIN_LINES) {
-    const text = lines.slice(i, i + PLAIN_LINES).join("\n");
-    tokens.push({ type: "code", raw: text, text, lang: "", plain: { first: i === 0, last: i + PLAIN_LINES >= lines.length } });
-  }
-}
-
-// One read-only code view per code block. They are retained native state: make them outside
-// render, and release them. Resolves to null, with everything released, once `stale()` is true.
-export async function makeCodeViews(doc, { dark, fontSize, fontFamily }, pause, stale) {
-  const views = new Map(), slice = { at: Date.now() }, syntax = (dark ? PALETTE.dark : PALETTE.light).syntax;
-  try {
-    for (const token of doc.code) {
-      const lang = (token.lang || "").trim().split(/\s+/)[0].toLowerCase();
-      views.set(token, EditorState.new({
-        language: LANGUAGES[lang] ?? (lang || "text"), value: token.text.replace(/\n$/, ""), readonly: true,
-        font_family: fontFamily, font_size: codeSize(fontSize), line_numbers: false, folding: false, soft_wrap: true, syntax,
-      }));
-      if (!(await breathe(slice, pause, stale))) { releaseCodeViews(views); return null; }
-    }
-  } catch (error) { releaseCodeViews(views); throw error; }
-  return views;
-}
-
-export function releaseCodeViews(views) {
-  for (const view of views?.values() || []) view.release();
+  const text = source.replace(/\n+$/, "");
+  tokens.push({ type: "code", raw: text, text, lang: "" });
 }
 
 // Inline tokens, lexed the first time a block is drawn, with the lexer state `Lexer.lex` resets.
@@ -178,12 +146,16 @@ function inlined(tokens, ctx) {
 }
 
 // Top-level blocks for the lazy list. Lists and tables split into one item per list item and row,
-// so a long one costs only its visible part.
+// code into CODE_LINES rows per item, so a long one costs only its visible part.
 function documentItems(tokens) {
   const items = [];
   for (const token of shown(tokens)) {
     if (token.type === "list") token.items.forEach((item, index) => items.push({ list: token, item, index }));
     else if (token.type === "table") [token.header, ...token.rows].forEach((cells, index) => items.push({ table: token, cells, row: index - 1 }));
+    else if (token.type === "code") {
+      const rows = sourceLines(token).length;
+      for (let from = 0; from < rows; from += CODE_LINES) items.push({ code: token, from, last: from + CODE_LINES >= rows });
+    }
     else items.push({ token });
   }
   return items;
@@ -193,15 +165,12 @@ const shown = tokens => tokens.filter(token => token.type !== "space" && token.t
 const plainHtml = token => (token.plainText ??= htmlText(token.text));
 
 // The document as a lazy list: GPUI describes and lays out only the blocks on screen.
-// Colors and sizes apply here, so a theme or size change doesn't lex again. The list renderer
-// allows no handlers, so the width code blocks wrap at is measured around it, into `layout`.
-export function documentView(doc, views, { dark, fontSize: size, fontFamily }, layout, id, padding) {
+// Colors and sizes apply here, so a theme or size change doesn't lex again.
+export function documentView(doc, { dark, fontSize: size, fontFamily }, id, padding) {
   const palette = dark ? PALETTE.dark : PALETTE.light, items = doc.items;
-  const width = Math.min(MAX_WIDTH, layout.width - padding * 2);
   return div().id(`${id}-area`).relative().size_full().min_w(0).min_h(0)
-    .on_size_change((bounds, cx) => { if (layout.width !== bounds.width) { layout.width = bounds.width; cx.notify(); } })
     .child(list(id, items.length, index => `block-${index}`, index => {
-      const ctx = { palette, size, mono: fontFamily, lexer: doc.lexer, views, id: `${id}-${index}`, links: { next: 0 }, width };
+      const ctx = { palette, size, mono: fontFamily, lexer: doc.lexer, id: `${id}-${index}`, links: { next: 0 } };
       return div().w_full().px(padding).pt(index ? 0 : EDGE).pb(index === items.length - 1 ? EDGE : 0)
         .child(v_flex().w_full().max_w(MAX_WIDTH).mx_auto().font_family(PROSE_FONT).text_size(size).line_height(1.5).text_color(palette.fg)
           .child(documentItem(items[index], ctx, index === 0)));
@@ -212,6 +181,7 @@ export function documentView(doc, views, { dark, fontSize: size, fontFamily }, l
 function documentItem(item, ctx, first) {
   if (item.list) return listItem(item.list, item.index, ctx, 0, item.index === item.list.items.length - 1);
   if (item.table) return tableRow(item.table, item.cells, item.row, ctx);
+  if (item.code) return codeBlock(item.code, ctx, item.from, item.from + CODE_LINES, item.last);
   return block(item.token, ctx, 0, first);
 }
 
@@ -238,7 +208,7 @@ function block(token, ctx, depth, first) {
     case "blockquote": {
       const border = Math.max(3, size * 0.25);
       return v_flex().w_full().mb(gap).px(size).border_l(border).border_color(palette.border)
-        .text_color(palette.muted).children(blocks(token.tokens, { ...ctx, width: ctx.width - size * 2 - border }, depth));
+        .text_color(palette.muted).children(blocks(token.tokens, ctx, depth));
     }
     case "list":
       return v_flex().w_full().mb(depth ? 0 : size).children(token.items.map((_item, index) => listItem(token, index, ctx, depth, false)));
@@ -253,35 +223,37 @@ function block(token, ctx, depth, first) {
   }
 }
 
-// The code view has no automatic height and scrolls whatever overflows it.
-// Size it to every row its soft wrap makes at the width left for it. The view wraps a little
-// before the full width, so count two columns fewer: a spare row is better than a scrolled one.
-// Plain-text pieces join into one block.
-function codeBlock(token, ctx) {
-  const { palette, size } = ctx, font = codeSize(size), inner = ctx.width - size * 2, view = ctx.views?.get(token);
-  const columns = inner > 0 ? Math.max(1, Math.floor(inner / (font * MONO_ADVANCE)) - 2) : 0;
-  if (token.wrap?.columns !== columns) token.wrap = { columns, rows: wrappedRows(token.text, columns) };
-  const { first = true, last = true } = token.plain || {};
-  return div().w_full().px(size).bg(palette.subtle)
+// Code is drawn as text rows, not as a read-only Editor: an Editor scrolls past its last line
+// under the wheel, and the list renderer allows no handler to stop that. Rows wrap at the block's
+// width. `from`..`to` picks the rows of one list item; the block looks whole across its items.
+function codeBlock(token, ctx, from = 0, to = Infinity, last = true) {
+  const { palette, size } = ctx, first = from === 0;
+  const font = codeSize(size), row = Math.round(font * 1.5);
+  return v_flex().w_full().px(size).bg(palette.subtle).text_size(font).line_height(`${row}px`)
+    .when(Boolean(ctx.mono), el => el.font_family(ctx.mono))
     .when(first, el => el.pt(size).rounded_t(6)).when(last, el => el.pb(size).mb(size).rounded_b(6))
-    .child(view ? Editor.new(view).w_full().h(token.wrap.rows * Math.round(font * CODE_LINE)).bg(palette.subtle) : div());
+    .children(codeLines(token, from, to).map(spans => h_flex().w_full().min_w(0).min_h(row).flex_wrap()
+      .children(spans.map(span => div().min_w(0).text_color(palette.syntax[span.cls] || palette.fg).child(span.text)))));
 }
 
-// Rows of `text` wrapped at word boundaries to `columns` characters; 0 means no wrapping.
-function wrappedRows(text, columns) {
-  let rows = 0;
-  for (const line of text.replace(/\n$/, "").replace(/\t/g, "    ").split("\n")) {
-    rows++;
-    if (columns <= 0 || line.length <= columns) continue;
-    let used = 0;
-    for (const word of line.split(/(?<=\s)(?=\S)/)) {
-      const visible = word.trimEnd().length;
-      if (used && used + visible > columns) { rows++; used = 0; }
-      if (visible > columns) { rows += Math.floor((visible - 1) / columns); used = (visible - 1) % columns + 1 + word.length - visible; }
-      else used += word.length;
-    }
+const sourceLines = token => token.text.replace(/\n$/, "").replace(/\t/g, "    ").split("\n");
+
+// Rows `from`..`to` of a code block as colored words, made the first time they are drawn. A word
+// keeps its trailing spaces, so a row wraps between words as prose does, not only between colors.
+// Colors carry state from row to row, so a colored block is made whole: a lexed fence is at most
+// HARD long. Plain text can be far longer, so it is made one list item's rows at a time.
+function codeLines(token, from, to) {
+  const lang = languageOf(token.lang), key = lang ? 0 : from, made = token.rows ??= new Map();
+  if (!made.has(key)) {
+    const source = token.source ??= sourceLines(token);
+    let state = null;
+    made.set(key, (lang ? source : source.slice(from, to)).map(line => {
+      const result = tokenize(line, lang, state);
+      state = result.state;
+      return result.spans.flatMap(span => span.text.split(/(?<=\s)(?=\S)/).filter(Boolean).map(text => ({ text, cls: span.cls })));
+    }));
   }
-  return rows;
+  return lang ? made.get(0).slice(from, to) : made.get(key);
 }
 
 function listItem(token, index, ctx, depth, last) {
@@ -292,7 +264,7 @@ function listItem(token, index, ctx, depth, last) {
   const indent = item.task ? size * 1.5 : size * 2, body = item.tokens.filter(child => child.type !== "checkbox");
   return h_flex().w_full().items_start().when(index > 0, el => el.mt(size * 0.25)).when(last, el => el.mb(size))
     .child(h_flex().w(indent).flex_shrink_0().justify_end().pr(item.task ? size * 0.5 : size * 0.4).child(marker))
-    .child(v_flex().flex_1().min_w(0).children(blocks(body, { ...ctx, width: ctx.width - indent }, depth + 1)));
+    .child(v_flex().flex_1().min_w(0).children(blocks(body, ctx, depth + 1)));
 }
 
 function checkbox(checked, ctx) {

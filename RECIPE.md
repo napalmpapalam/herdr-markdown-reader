@@ -95,13 +95,14 @@ The reader checks an open file every five seconds.
 Ignore stale file, folder, tree, and index results after a newer request or workspace change.
 
 Open in tab carries the file, document machine, workspace folder and machine, text size, and sidebar visibility, then closes the overlay.
-The reader draws Markdown itself in GitHub's style; only code blocks support selection and copying.
+The reader draws Markdown itself in GitHub's style; its text does not support selection and copying.
+Code blocks are syntax-colored text rows that wrap at the block's width and never scroll on their own.
 MDX components are not executed.
 
 ## Built from
 
 There is no layout file, HTML, CSS, DOM, or browser runtime.
-The main mod is a gpui-kit View with gpui-base InputState, Input, Button, Popover, Editor, virtual lists, scroll handles, and scrollbars.
+The main mod is a gpui-kit View with gpui-base InputState, Input, Button, Popover, virtual lists, scroll handles, and scrollbars.
 Virtual list renderers only describe rows; their click handlers belong to the list.
 
 The reader files are:
