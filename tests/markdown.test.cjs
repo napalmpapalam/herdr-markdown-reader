@@ -90,7 +90,7 @@ test('draws fenced code as rows of syntax-colored text', async t => {
   assert.deepEqual([word(app, '// ').styles.text_color, word(app, 'done').styles.text_color], ['#9198a1', '#9198a1']);
   const [block] = codeBlocks(app);
   assert.equal(block.kids.length, 3);
-  assert.deepEqual([block.kids[1].kids.length, block.kids[1].styles.min_h], [0, 20]);
+  assert.deepEqual([block.kids[1].kids.length, block.kids[1].styles.min_h], [0, 21]);
   assert.ok(word(app, 'nested'));
 });
 
@@ -140,6 +140,13 @@ test('keeps a build error through background reloads instead of an older documen
   assert.equal(app.reader.buildError, 'Cannot lex boom');
   assert.equal(app.reader.doc, null);
   assert.equal(app.find('reader-document-' + app.reader.loadedFile + '-area'), null);
+});
+
+test('draws list markers as a disc, a circle and a square in the text color', async t => {
+  const app = await open(t, '- one\n  - two\n    - three');
+  const markers = nodes(app, node => node.styles.size === 5);
+  assert.deepEqual(markers.map(marker => [marker.styles.bg, marker.styles.border_color, 'rounded' in marker.styles]),
+    [['#f0f6fc', undefined, true], [undefined, '#f0f6fc', true], ['#f0f6fc', undefined, false]]);
 });
 
 test('draws a loose task list without its source markers', async t => {
