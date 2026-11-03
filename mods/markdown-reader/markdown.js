@@ -1,5 +1,5 @@
 // Draws a Markdown document as native elements in GitHub's style.
-import { div, list } from "gpui-kit";
+import { div, list, svg } from "gpui-kit";
 import { h_flex, v_flex, Link, Scrollbar } from "gpui-base";
 import { languageOf, tokenize } from "./highlight.js";
 import { Lexer } from "./vendor/marked.esm.js";
@@ -11,12 +11,16 @@ const PALETTE = {
     code: "#656c7633", border: "#3d444d", borderMuted: "#3d444db3", checked: "#1f6feb",
     syntax: { keyword: "#ff7b72", string: "#a5d6ff", comment: "#9198a1", function: "#d2a8ff", type: "#ffa657",
       number: "#79c0ff", boolean: "#79c0ff", variable: "#ffa657" },
+    alerts: { note: ["#1f6feb", "#4493f8"], tip: ["#238636", "#3fb950"], important: ["#8957e5", "#ab7df8"],
+      warning: ["#9e6a03", "#d29922"], caution: ["#da3633", "#f85149"] },
   },
   light: {
     fg: "#1f2328", muted: "#59636e", accent: "#0969da", canvas: "#ffffff", subtle: "#f6f8fa",
     code: "#818b981f", border: "#d1d9e0", borderMuted: "#d1d9e0b3", checked: "#0969da",
     syntax: { keyword: "#cf222e", string: "#0a3069", comment: "#59636e", function: "#6639ba", type: "#953800",
       number: "#0550ae", boolean: "#0550ae", variable: "#953800" },
+    alerts: { note: ["#0969da", "#0969da"], tip: ["#1a7f37", "#1a7f37"], important: ["#8250df", "#8250df"],
+      warning: ["#9a6700", "#9a6700"], caution: ["#cf222e", "#d1242f"] },
   },
 };
 
@@ -25,8 +29,18 @@ const PROSE_FONT = ".SystemUIFont";
 // Code rows per list item, so a long block costs only its visible part.
 const CODE_LINES = 60;
 const codeSize = fontSize => Math.round(fontSize * 0.85);
+// The width of a quote's left border and the height of a rule: .25em, at least 3 px.
+const ruleSize = fontSize => Math.max(3, fontSize * 0.25);
 const MAX_WIDTH = 820, EDGE = 18, SLICE_MS = 30;
 const HEADING_SIZES = [2, 1.5, 1.25, 1, 0.875, 0.85];
+// GitHub alerts: title and octicon per kind; colors are `alerts` in PALETTE, [border, title].
+const ALERTS = {
+  note: { title: "Note", icon: "info" }, tip: { title: "Tip", icon: "light-bulb" },
+  important: { title: "Important", icon: "report" }, warning: { title: "Warning", icon: "alert" },
+  caution: { title: "Caution", icon: "stop" },
+};
+const ALERT_MARKER = new RegExp(`^\\[!(${Object.keys(ALERTS).join("|")})\\][ \\t]*(?:\\n|$)`, "i");
+const OCTICONS = "mods/markdown-reader/vendor/octicons";
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", copy: "©", reg: "®", mdash: "—", ndash: "–", hellip: "…" };
 
 function decode(text) {
@@ -84,6 +98,7 @@ export async function lexDocument(text, key, pause, stale) {
     if (!(await breathe(slice, pause, stale))) return null;
   }
   if (carry) lexChunk(lexer, carry, true);
+  for (const token of lexer.tokens) if (token.type === "blockquote") markAlert(token, lexer.inlineQueue);
   for (const next of lexer.inlineQueue) {
     if (next.src.length > INLINE) next.tokens.push({ type: "text", raw: next.src, text: next.src });
     else next.tokens.pending = next.src;
@@ -125,6 +140,20 @@ function unclosed(token) {
   if (tag) return !new RegExp(`</${tag[1]}>`, "i").test(raw);
   return (raw.startsWith("<!--") && !raw.includes("-->")) || (raw.startsWith("<?") && !raw.includes("?>"))
     || (raw.startsWith("<![CDATA[") && !raw.includes("]]>")) || (/^<![A-Za-z]/.test(raw) && !raw.includes(">"));
+}
+
+// GitHub draws a quote as an alert when its first line is only `[!KIND]` and a body follows.
+// Only top-level quotes: GitHub doesn't draw alerts inside lists or other quotes.
+// Runs before the inline queue is read, so the marker is cut from the text that gets lexed.
+function markAlert(quote, queue) {
+  const first = quote.tokens[0], match = first?.type === "paragraph" && first.text.match(ALERT_MARKER);
+  if (!match) return;
+  const rest = first.text.slice(match[0].length), body = rest.trim();
+  if (!body && !shown(quote.tokens.slice(1)).length) return;
+  quote.alert = match[1].toLowerCase();
+  if (!body) { quote.tokens.shift(); return; }
+  first.text = rest;
+  queue.find(next => next.tokens === first.tokens).src = rest;
 }
 
 // Too long to lex in one slice: monospaced text.
@@ -205,8 +234,8 @@ function block(token, ctx, depth, first) {
     case "code":
       return codeBlock(token, ctx);
     case "blockquote": {
-      const border = Math.max(3, size * 0.25);
-      return v_flex().w_full().mb(gap).px(size).border_l(border).border_color(palette.border)
+      if (token.alert) return alert(token, ctx, depth);
+      return v_flex().w_full().mb(gap).px(size).border_l(ruleSize(size)).border_color(palette.border)
         .text_color(palette.muted).children(blocks(token.tokens, ctx, depth));
     }
     case "list":
@@ -214,12 +243,23 @@ function block(token, ctx, depth, first) {
     case "table":
       return v_flex().w_full().children([token.header, ...token.rows].map((cells, index) => tableRow(token, cells, index - 1, ctx)));
     case "hr":
-      return div().w_full().h(Math.max(3, size * 0.25)).my(size * 1.5).rounded(1).bg(palette.border);
+      return div().w_full().h(ruleSize(size)).my(size * 1.5).rounded(1).bg(palette.border);
     case "html":
       return div().w_full().mb(gap).child(plainHtml(token));
     default:
       return div().w_full().mb(gap).child(token.raw || "");
   }
+}
+
+// GitHub's alert: a colored left border, an icon and title in that color, the body in the text color.
+// The body's last block keeps its bottom margin, so the body pulls it back, as GitHub's `:last-child` rule does.
+function alert(token, ctx, depth) {
+  const { palette, size } = ctx, kind = ALERTS[token.alert], [border, color] = palette.alerts[token.alert];
+  return v_flex().w_full().mb(size).px(size).py(size * 0.5).border_l(ruleSize(size)).border_color(border)
+    .child(h_flex().items_center().mb(size).line_height(1).font_weight(500).text_color(color)
+      .child(svg(`${OCTICONS}/${kind.icon}.svg`).size(size).flex_none().mr(size * 0.5).text_color(color))
+      .child(kind.title))
+    .child(v_flex().w_full().mb(-size).children(blocks(token.tokens, ctx, depth)));
 }
 
 // Code is drawn as text rows, not as a read-only Editor: an Editor scrolls past its last line

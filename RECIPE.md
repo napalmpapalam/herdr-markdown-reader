@@ -97,6 +97,7 @@ Ignore stale file, folder, tree, and index results after a newer request or work
 Open in tab carries the file, document machine, workspace folder and machine, text size, and sidebar visibility, then closes the overlay.
 The reader draws Markdown itself in GitHub's style; its text does not support selection and copying.
 Code blocks are syntax-colored text rows that wrap at the block's width and never scroll on their own.
+A top-level quote whose first line is only `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` (any case) and that has a body draws as a GitHub alert: a colored left border, an octicon and a title. Quotes in lists or in other quotes stay plain, as on GitHub.
 MDX components are not executed.
 
 ## Built from
@@ -116,6 +117,7 @@ The reader files are:
 - icons.js: Material Icon Theme's lookup (path rule, then name, then the longest extension; light table first in a light appearance).
 - vendor/material-icon-theme/: the folder and Markdown icons, a lookup table trimmed to them, and the theme's MIT license.
   tools/build-icons.mjs generates them from material-icon-theme 5.40.0; image() draws them in full color.
+- vendor/octicons/: the five GitHub alert icons from Primer Octicons 19.15.0 and their MIT license; svg() draws them in the alert's color.
 - book.svg, chevron-right.svg, and chevron-down.svg: native UI icons.
 - mod.json: place:none and dialog dimensions.
 

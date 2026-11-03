@@ -207,3 +207,44 @@ test('lexes in chunks exactly as marked lexes the whole text', async t => {
     assert.equal(shape(doc.lexer.tokens), shape(app.Lexer.lex(sample, { gfm: true })));
   }
 });
+
+// The quote box of the first alert and the svg icon inside it.
+const alertBox = app => nodes(app, node => node.type === 'column' && 'border_l' in node.styles)[0];
+const icon = app => nodes(app, node => node.type === 'svg')[0];
+
+test('draws the five GitHub alerts with their own title, icon and color', async t => {
+  const kinds = [['NOTE', 'Note', 'info', '#1f6feb', '#4493f8'], ['TIP', 'Tip', 'light-bulb', '#238636', '#3fb950'],
+    ['IMPORTANT', 'Important', 'report', '#8957e5', '#ab7df8'], ['WARNING', 'Warning', 'alert', '#9e6a03', '#d29922'],
+    ['CAUTION', 'Caution', 'stop', '#da3633', '#f85149']];
+  for (const [marker, title, file, border, color] of kinds) {
+    const app = await open(t, `> [!${marker}]\n> Read **this**.`);
+    assert.equal(alertBox(app).styles.border_color, border);
+    assert.equal(icon(app).elementId, `mods/markdown-reader/vendor/octicons/${file}.svg`);
+    assert.equal(word(app, title).styles.text_color, color);
+    assert.equal(word(app, 'this').styles.font_weight, 600);
+    assert.equal(nodes(app, node => /\[!/.test(text(node))).length, 0);
+  }
+});
+
+test('reads an alert marker in any case, with the body after a blank quote line', async t => {
+  const app = await open(t, '> [!warning]  \n>\n> Body text.', { appearance: { dark: false } });
+  assert.equal(alertBox(app).styles.border_color, '#9a6700');
+  assert.ok(word(app, 'Warning'));
+  assert.ok(word(app, 'Body'));
+});
+
+test('keeps a quote plain when its marker has text beside it, no body, or sits in a list', async t => {
+  const sources = ['> [!NOTE] inline text', '> [!NOTE]', '- item\n\n  > [!NOTE]\n  > nested', '> > [!NOTE]\n> > nested',
+    '> [!NOTICE]\n> body'];
+  for (const source of sources) {
+    const app = await open(t, source);
+    assert.equal(icon(app), undefined, source);
+    assert.ok(nodes(app, node => /\[!NOT/.test(text(node))).length, source);
+  }
+});
+
+test('cuts the marker from an alert body too long to style', async t => {
+  const app = await open(t, `> [!TIP]\n> ${'long '.repeat(2000)}`);
+  assert.ok(word(app, 'Tip'));
+  assert.equal(nodes(app, node => /\[!/.test(text(node))).length, 0);
+});
