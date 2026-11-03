@@ -33,7 +33,6 @@ const CODE_LINE = 1.5, MONO_ADVANCE = 0.6;
 const codeSize = fontSize => Math.round(fontSize * 0.85);
 const MAX_WIDTH = 820, EDGE = 18, SLICE_MS = 30;
 const HEADING_SIZES = [2, 1.5, 1.25, 1, 0.875, 0.85];
-const BULLETS = ["•", "◦", "▪"];
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", copy: "©", reg: "®", mdash: "—", ndash: "–", hellip: "…" };
 
 function decode(text) {
@@ -286,13 +285,22 @@ function wrappedRows(text, columns) {
 
 function listItem(token, index, ctx, depth, last) {
   const { palette, size } = ctx, item = token.items[index], start = token.start === "" ? 1 : Number(token.start);
-  const marker = item.task
-    ? checkbox(item.checked, ctx)
-    : div().text_color(token.ordered ? palette.fg : palette.muted).child(token.ordered ? `${start + index}.` : BULLETS[depth % 3]);
+  const bulleted = !item.task && !token.ordered;
+  const marker = item.task ? checkbox(item.checked, ctx) : token.ordered ? div().child(`${start + index}.`) : bullet(depth, ctx);
   const indent = item.task ? size * 1.5 : size * 2, body = item.tokens.filter(child => child.type !== "checkbox");
   return h_flex().w_full().items_start().when(index > 0, el => el.mt(size * 0.25)).when(last, el => el.mb(size))
-    .child(h_flex().w(indent).flex_shrink_0().justify_end().pr(item.task ? size * 0.5 : size * 0.4).child(marker))
+    .child(h_flex().w(indent).flex_shrink_0().justify_end().pr(item.task ? size * 0.5 : bulleted ? size * 0.55 : size * 0.4).child(marker))
     .child(v_flex().flex_1().min_w(0).children(blocks(body, { ...ctx, width: ctx.width - indent }, depth + 1)));
+}
+
+// GitHub's list markers: shapes in the text color, a disc, then a circle, then a square, centered
+// on the first line. Glyphs ("•", "◦") come out small and uneven in the prose font.
+function bullet(depth, ctx) {
+  const { palette, size } = ctx, dot = Math.round(size * 0.32), shape = depth % 3;
+  return div().mt((size * 1.5 - dot) / 2).size(dot).flex_none()
+    .when(shape === 0, el => el.rounded(dot).bg(palette.fg))
+    .when(shape === 1, el => el.rounded(dot).border_1().border_color(palette.fg))
+    .when(shape === 2, el => el.bg(palette.fg));
 }
 
 function checkbox(checked, ctx) {
@@ -371,7 +379,9 @@ function styled(text, style, ctx) {
   // A Link opens its address natively: the list renderer allows no click handlers.
   const el = url ? Link.new(`${ctx.id}-link-${ctx.links.next++}`).href(url).cursor_pointer().hover(s => s.underline()) : div();
   return el.flex_none().child(text)
-    .when(Boolean(style.code), el => el.px(size * 0.4).rounded(6).bg(palette.code).text_size(size * 0.85))
+    // GitHub's inline code: 85% text, padding .2em .4em around one line of its own height, so a pill
+    // stays shorter than the prose line and pills on two lines don't touch.
+    .when(Boolean(style.code), el => el.px(size * 0.34).py(size * 0.17).line_height(1).rounded(6).bg(palette.code).text_size(size * 0.85))
     .when(Boolean(style.code && ctx.mono), el => el.font_family(ctx.mono))
     .when(Boolean(style.bold), el => el.font_weight(600))
     .when(Boolean(style.italic), el => el.italic())

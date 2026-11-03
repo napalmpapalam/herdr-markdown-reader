@@ -97,10 +97,10 @@ test('sizes a code view to the rows its soft wrap makes at the measured width', 
   const area = () => app.find('reader-document-' + app.reader.loadedFile + '-area');
   const height = () => nodes(app, node => node.type === 'editor')[0].styles.h;
   assert.equal(app.editors.at(-1).options.soft_wrap, true);
-  assert.equal(height(), 20);
-  // 15 px text: 13 px code at a 7.8 px advance fits 22 columns inside 28 px page and 15 px block padding.
-  area().handlers.on_size_change({ width: 56 + 30 + 7.8 * 22 }, app.cx);
-  assert.equal(height(), 40);
+  assert.equal(height(), 21);
+  // 16 px text: 14 px code at an 8.4 px advance fits 22 columns inside 28 px page and 16 px block padding.
+  area().handlers.on_size_change({ width: 56 + 32 + 8.4 * 22 + 1 }, app.cx);
+  assert.equal(height(), 42);
 });
 
 test('lexes long documents in chunks without breaking fences or reference links', async t => {
@@ -132,10 +132,10 @@ test('rebuilds code views with the light palette when the appearance changes', a
 
 test('keeps the measured width for code views across rebuilds', async t => {
   const app = await open(t, '```\naaaa bbbb cccc dddd eeee ffff\n```');
-  app.find('reader-document-' + app.reader.loadedFile + '-area').handlers.on_size_change({ width: 56 + 30 + 7.8 * 22 }, app.cx);
+  app.find('reader-document-' + app.reader.loadedFile + '-area').handlers.on_size_change({ width: 56 + 32 + 8.4 * 22 + 1 }, app.cx);
   app.reader.resizeText(1, app.cx); await app.settle();
   app.reader.resizeText(-1, app.cx); await app.settle();
-  assert.equal(nodes(app, node => node.type === 'editor')[0].styles.h, 40);
+  assert.equal(nodes(app, node => node.type === 'editor')[0].styles.h, 42);
 });
 
 test('keeps a build error through background reloads instead of an older document', async t => {
@@ -146,6 +146,13 @@ test('keeps a build error through background reloads instead of an older documen
   assert.equal(app.reader.buildError, 'Cannot highlight boom');
   assert.equal(app.reader.doc, null);
   assert.equal(app.find('reader-document-' + app.reader.loadedFile + '-area'), null);
+});
+
+test('draws list markers as a disc, a circle and a square in the text color', async t => {
+  const app = await open(t, '- one\n  - two\n    - three');
+  const markers = nodes(app, node => node.styles.size === 5);
+  assert.deepEqual(markers.map(marker => [marker.styles.bg, marker.styles.border_color, 'rounded' in marker.styles]),
+    [['#f0f6fc', undefined, true], [undefined, '#f0f6fc', true], ['#f0f6fc', undefined, false]]);
 });
 
 test('draws a loose task list without its source markers', async t => {

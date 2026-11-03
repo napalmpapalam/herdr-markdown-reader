@@ -18,7 +18,7 @@ In narrow panes it shows only the folder icon.
 Click it to open the folder selector.
 The kebab menu contains text size controls, Reset text size, Refresh files and document, and Use terminal folder.
 An overlay also has Open in tab and Close reader in this menu.
-Text starts at 15 px and can be changed from 12 to 23 px.
+Text starts at 16 px, as on GitHub, and can be changed from 12 to 23 px.
 
 Open folder shows a native popover with a folder path field, Open, and Browse this computer.
 Browse opens the system folder picker.

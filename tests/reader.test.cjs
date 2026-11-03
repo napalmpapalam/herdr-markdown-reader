@@ -101,7 +101,7 @@ test('menu controls clamp text size and Open in tab keeps the file and workspace
   assert.equal(app.reader.fontSize, 23);
   for (let i = 0; i < 30; i++) app.click('reader-smaller');
   assert.equal(app.reader.fontSize, 12);
-  app.click('reader-size-reset'); assert.equal(app.reader.fontSize, 15);
+  app.click('reader-size-reset'); assert.equal(app.reader.fontSize, 16);
   app.reader.open('README.md', app.cx); await app.settle(); app.click('reader-tab');
   assert.equal(app.commands[0].name, 'tab.new');
   assert.equal(app.commands[0].args.props.cwd, root);
@@ -172,7 +172,7 @@ test('restores the document and reading controls for the same project after reop
   first.click('reader-toggle-tree');
   const reopened = createReader({ root, storage }); await reopened.settle();
   assert.match(reopened.reader.content, /^# Installation/);
-  assert.equal(reopened.reader.fontSize, 18);
+  assert.equal(reopened.reader.fontSize, 19);
   assert.equal(reopened.reader.treeVisible, false);
   assert.ok(reopened.reader.expanded.has('guides'));
   assert.ok(!reopened.reader.expanded.has('guides/setup'));
@@ -188,10 +188,10 @@ test('folder changes restore each project independently and separate machines', 
   app.reader.resizeText(-2, app.cx);
   app.reader.openFolder(root, null, app.cx); await app.settle();
   assert.equal(app.reader.file, root + '/README.md');
-  assert.equal(app.reader.fontSize, 19);
+  assert.equal(app.reader.fontSize, 20);
   const remote = createReader({ root, storage, properties: { on: 'other-machine' } }); await remote.settle();
   assert.equal(remote.reader.file, null);
-  assert.equal(remote.reader.fontSize, 15);
+  assert.equal(remote.reader.fontSize, 16);
 });
 
 test('explicit file props override saved documents and failed opens do not replace saved files', async t => {

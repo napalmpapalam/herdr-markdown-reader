@@ -48,6 +48,8 @@ Choose **Open in tab** in the kebab menu for a full reading workspace.
 `;
 
 const EMPTY = "*This file is empty.*";
+// GitHub's body text size, in px.
+const TEXT_SIZE = 16;
 
 export default class MarkdownReader extends View {
   init(_props, cx) {
@@ -57,7 +59,7 @@ export default class MarkdownReader extends View {
     this.on = p.on !== undefined ? p.on : context.on;
     this.file = null;
     this.content = WELCOME;
-    this.fontSize = Math.max(12, Math.min(23, Number(p.fontSize) || 15));
+    this.fontSize = Math.max(12, Math.min(23, Number(p.fontSize) || TEXT_SIZE));
     this.doc = null; this.views = null; this.words = 0; this.buildVersion = 0; this.layout = { width: 0 };
     this.request = 0;
     this.loading = false;
@@ -284,7 +286,7 @@ export default class MarkdownReader extends View {
         this.base = folder; this.on = on; this.fileOn = on;
         this.file = null; this.loadedFile = null; this.loadedOn = null; this.content = WELCOME; this.error = null; this.loading = false;
         this.files = []; this.matches = []; this.showSuggestions = false; this.searching = false; this.folderError = null;
-        this.tree = new Map(); this.expanded = new Set(); this.rootExpanded = true; this.treeVisible = true; this.fontSize = 15;
+        this.tree = new Map(); this.expanded = new Set(); this.rootExpanded = true; this.treeVisible = true; this.fontSize = TEXT_SIZE;
         this.folderOpen = false; this.menuOpen = false;
         this.input.set_value(""); this.folderInput.set_value(folder);
         this.restoreState(cx); this.rebuild(cx);
@@ -442,7 +444,7 @@ export default class MarkdownReader extends View {
           .child(this.button("reader-smaller", "A−", (_e, cx) => this.resizeText(-1, cx), false, this.fontSize <= 12).accessibility_label("Decrease text size"))
           .child(div().w(32).text_center().text_size(11).text_color(t.muted).child(this.fontSize + " px"))
           .child(this.button("reader-larger", "A+", (_e, cx) => this.resizeText(1, cx), false, this.fontSize >= 23).accessibility_label("Increase text size")))
-        .child(this.button("reader-size-reset", "Reset text size", (_e, cx) => { this.fontSize = 15; this.rebuild(cx); this.saveState(); cx.notify(); }))
+        .child(this.button("reader-size-reset", "Reset text size", (_e, cx) => { this.fontSize = TEXT_SIZE; this.rebuild(cx); this.saveState(); cx.notify(); }))
         .child(div().h(1).my(4).bg(t.border))
         .child(this.button("reader-refresh", "Refresh files and document", (_e, cx) => { this.menuOpen = false; this.refresh(cx); }))
         .child(this.button("reader-current-folder", "Use terminal folder", (_e, cx) => {
