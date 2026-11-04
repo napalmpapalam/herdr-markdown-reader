@@ -44,7 +44,7 @@ function element(type, id) {
   return proxy;
 }
 
-function createReader({ root, properties = {}, appearance = { dark: true, font_family: 'Mono' }, focus, fileRead, picker = async () => null, discovery, storage = new Map() } = {}) {
+function createReader({ root, properties = {}, appearance = { dark: true, font_family: 'Mono' }, focus, fileRead, picker = async () => null, discovery, storage = new Map(), appHome = root && path.join(root, '.app') } = {}) {
   const timers = [], tasks = new Set(), errors = [], commands = [];
   const stop = new Error('stop command listener');
   const cx = {
@@ -76,9 +76,10 @@ function createReader({ root, properties = {}, appearance = { dark: true, font_f
     node.kids.push(...node.keys.map((_key, i) => render(i, cx)));
     return node;
   };
-  const markdown = new Function('div', 'list', 'svg', 'h_flex', 'v_flex', 'Link', 'Scrollbar', 'languageOf', 'tokenize', 'Lexer', 'EMOJI',
-    moduleSource('markdown.js') + '\nreturn { lexDocument, documentView };')(
-    () => element('div'), list, file => element('svg', file), () => element('row'), () => element('column'),
+  const { ImageCache, WEB } = new Function('exec', 'appHome', moduleSource('images.js') + '\nreturn { ImageCache, WEB };')(exec, () => appHome);
+  const markdown = new Function('WEB', 'div', 'image', 'list', 'svg', 'h_flex', 'v_flex', 'Link', 'Scrollbar', 'languageOf', 'tokenize', 'Lexer', 'EMOJI',
+    moduleSource('markdown.js') + '\nreturn { lexDocument, documentView };')(WEB,
+    () => element('div'), file => element('image', file), list, file => element('svg', file), () => element('row'), () => element('column'),
     { new: id => element('link', id) }, { vertical: () => element('scrollbar') }, highlight.languageOf, highlight.tokenize, BoomLexer, EMOJI);
   const bindings = {
     View: class {}, div: () => element('div'), svg: file => element('svg', file), image: file => element('image', file),
@@ -98,7 +99,7 @@ function createReader({ root, properties = {}, appearance = { dark: true, font_f
     spaces: () => [{ id: 'space', active: true, folder: root, machine: null }], home: () => root,
     readTextFile: fileRead || (async file => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } }),
     pickFolder: picker, run: (name, args) => commands.push({ name, args }), closeOverlay: id => commands.push({ close: id }),
-    nextCommand: async () => { throw stop; }, ...search, ...files, ...discovery, folderContext, iconFile,
+    nextCommand: async () => { throw stop; }, ImageCache, ...search, ...files, ...discovery, folderContext, iconFile,
   };
   const source = moduleSource('main.js').replace('default class MarkdownReader', 'return class MarkdownReader');
   const Reader = new Function(...Object.keys(bindings), source)(...Object.values(bindings));

@@ -49,6 +49,12 @@ The reader also checks an open file every five seconds.
 Documents are drawn in GitHub's style: its colors, type sizes and spacing, syntax-colored code blocks, tables, task lists, alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`), emoji shortcodes (`:tada:`), footnotes (`[^1]`) and YAML front matter as a table of its keys, in dark or light by the app's appearance.
 Text in the reader does not support selection and copying.
 Web links open in the browser.
+Images draw at their own size, up to the text width.
+Herdr loads images only from its own folder, so the reader copies local images and downloads web images into `~/.config/herdr-app/cache/markdown-reader/images/`.
+Web images download again each time a file opens, so opening a document contacts the hosts of its images, as a browser does.
+Copies are deleted after a day without use.
+An image that can't load, or a local image of a document on another machine, shows its alt text.
+Images need `sh` and `curl`, so on Windows they show their alt text too.
 UTF-8 text files are limited to 1 MiB by Herdr.
 MDX files are read as Markdown; components are not executed.
 

@@ -362,3 +362,35 @@ test('reads front matter lists, comments and keys as YAML does, and an empty one
   const empty = await open(t, '---\n---\n\n# Page');
   assert.equal(items(empty), 1);
 });
+
+// Draws the document, then copies the images it asked for into the harness's app folder.
+async function loadImages(app) {
+  nodes(app, () => false);
+  app.reader.loadImages(app.cx);
+  await app.settle();
+  return nodes(app, node => node.type === 'image');
+}
+
+test('draws a copy of a local image once it loads, and its alt text until then or when it is no file', async t => {
+  const root = document(t, 'Before ![pic](img/a%20b.png) after ![gone](img/none.png) ![folder](img)');
+  fs.mkdirSync(path.join(root, 'img'));
+  fs.writeFileSync(path.join(root, 'img/a b.png'), 'png');
+  const app = createReader({ root, properties: { file: root + '/doc.md' } });
+  await app.settle();
+  assert.ok(word(app, 'pic'));
+  const [picture] = await loadImages(app);
+  assert.match(picture.elementId, /^cache\/markdown-reader\/images\/[0-9a-f]{8}-\d+$/);
+  assert.equal(fs.readFileSync(path.join(root, '.app', picture.elementId), 'utf8'), 'png');
+  assert.equal(word(app, 'pic'), undefined);
+  assert.equal(word(app, 'gone').styles.text_color, '#4493f8');
+  assert.ok(word(app, 'folder'));
+});
+
+test('draws a linked image inside its link and keeps alt text for other schemes', async t => {
+  const app = await open(t, '[![build](a.png)](https://ci.example) ![data](data:image/png;base64,AA)');
+  fs.writeFileSync(path.join(app.root, 'a.png'), 'png');
+  await loadImages(app);
+  const link = nodes(app, node => node.type === 'link' && node.kids.some(kid => kid.type === 'image'))[0];
+  assert.equal(link.styles.href, 'https://ci.example');
+  assert.ok(word(app, 'data'));
+});
