@@ -1,9 +1,10 @@
 // Draws a Markdown document as native elements in GitHub's style.
-import { div, list, svg } from "gpui-kit";
+import { div, image, list, svg } from "gpui-kit";
 import { h_flex, v_flex, Link, Scrollbar } from "gpui-base";
 import { languageOf, tokenize } from "./highlight.js";
 import { Lexer } from "./vendor/marked.esm.js";
 import EMOJI from "./vendor/gemoji/table.js";
+import { WEB } from "./images.js";
 
 // GitHub's own colors (github-markdown-css), so documents look like github.com.
 const PALETTE = {
@@ -348,11 +349,12 @@ const plainHtml = token => (token.plainText ??= htmlText(token.text));
 
 // The document as a lazy list: GPUI describes and lays out only the blocks on screen.
 // Colors and sizes apply here, so a theme or size change doesn't lex again.
-export function documentView(doc, { dark, fontSize: size, fontFamily }, id, padding) {
-  const palette = dark ? PALETTE.dark : PALETTE.light, items = doc.items;
+// `images` (an ImageCache) gives the images' paths; a new version draws and measures every row again.
+export function documentView(doc, { dark, fontSize: size, fontFamily, images }, id, padding) {
+  const palette = dark ? PALETTE.dark : PALETTE.light, items = doc.items, version = images?.version ?? 0;
   return div().id(`${id}-area`).relative().size_full().min_w(0).min_h(0)
-    .child(list(id, items.length, index => `block-${index}`, index => {
-      const ctx = { palette, size, mono: fontFamily, lexer: doc.lexer, id: `${id}-${index}`, links: { next: 0 } };
+    .child(list(id, items.length, index => `block-${index}-${version}`, index => {
+      const ctx = { palette, size, mono: fontFamily, lexer: doc.lexer, images, file: doc.key, id: `${id}-${index}`, links: { next: 0 } };
       return div().w_full().px(padding).pt(index ? 0 : EDGE).pb(index === items.length - 1 ? EDGE : 0)
         .child(v_flex().w_full().max_w(MAX_WIDTH).mx_auto().font_family(PROSE_FONT).text_size(size).line_height(1.5).text_color(palette.fg)
           .child(documentItem(items[index], ctx, index === 0)));
@@ -537,7 +539,9 @@ function inline(tokens, ctx, align = null, extra = []) {
   const words = [], space = ctx.size * 0.28;
   let word = [];
   const flush = () => { if (word.length) words.push(h_flex().flex_none().items_baseline().mr(space).children(word)); word = []; };
-  for (const piece of pieces) {
+  for (const item of pieces) {
+    const piece = "image" in item ? imagePiece(item, ctx) : item;
+    if (piece.picture) { flush(); words.push(div().max_w_full().mr(space).child(piece.picture)); continue; }
     if (piece.br) { flush(); words.push(div().w_full().h(0)); continue; }
     if (piece.style.code) { word.push(styled(piece.text, piece.style, ctx)); continue; }
     const parts = piece.text.split(/(\s+)/);
@@ -568,7 +572,7 @@ function flatten(tokens, style, out) {
       case "checkbox": break;
       // Inline tags are dropped and the text between them stays.
       case "html": if (/^<br\s*\/?>$/i.test(token.text)) out.push({ br: true }); break;
-      case "image": out.push({ text: token.text || token.href, style: { ...style, link: style.link || token.href } }); break;
+      case "image": out.push({ image: token.href, alt: token.text || token.href, style }); break;
       case "footnoteRef": out.push({ text: `[${token.note.number}]`, style: { ...style, link: `#fn-${token.note.number}`, sup: true } }); break;
       case "text": token.tokens ? flatten(token.tokens, style, out) : out.push({ text: style.verbatim ? decode(token.text) : emojify(decode(token.text)), style }); break;
       default: out.push({ text: decode(token.text ?? token.raw ?? ""), style });
@@ -576,11 +580,22 @@ function flatten(tokens, style, out) {
   }
 }
 
+// A loaded image, or its alt text in the link color until then and when it can't load.
+function imagePiece(piece, ctx) {
+  const path = ctx.images?.find(piece.image, ctx.file);
+  if (path) return { picture: linked(webLink(piece.style), ctx).max_w_full().child(image(path).max_w_full()) };
+  return { text: piece.alt, style: { ...piece.style, link: piece.style.link || piece.image } };
+}
+
+const webLink = style => (WEB.test(style.link || "") ? style.link : null);
+
+// A Link opens its address natively: the list renderer allows no click handlers.
+const linked = (url, ctx) => (url ? Link.new(`${ctx.id}-link-${ctx.links.next++}`).href(url).cursor_pointer() : div());
+
 function styled(text, style, ctx) {
-  const { palette, size } = ctx, url = /^https?:\/\//i.test(style.link || "") ? style.link : null;
-  // A Link opens its address natively: the list renderer allows no click handlers.
-  const el = url ? Link.new(`${ctx.id}-link-${ctx.links.next++}`).href(url).cursor_pointer().hover(s => s.underline()) : div();
-  return el.flex_none().child(text)
+  const { palette, size } = ctx, url = webLink(style);
+  return linked(url, ctx).flex_none().child(text)
+    .when(Boolean(url), el => el.hover(s => s.underline()))
     // GitHub's inline code: 85% text, padding .2em .4em around one line of its own height, so a pill
     // stays shorter than the prose line and pills on two lines don't touch.
     .when(Boolean(style.code), el => el.px(size * 0.34).py(size * 0.17).line_height(1).rounded(6).bg(palette.code).text_size(size * 0.85))

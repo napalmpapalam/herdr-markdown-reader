@@ -6,6 +6,7 @@ import { clean, resolvePath, rankFiles, isFolderQuery, searchMatches } from "./s
 import { folderContext } from "./context.js";
 import { iconFile } from "./icons.js";
 import { lexDocument, documentView } from "./markdown.js";
+import { ImageCache } from "./images.js";
 
 function currentFolder() {
   return folderContext(focused(), panes(), spaces(), home());
@@ -62,6 +63,7 @@ export default class MarkdownReader extends View {
     this.content = WELCOME;
     this.fontSize = Math.max(12, Math.min(23, Number(p.fontSize) || TEXT_SIZE));
     this.doc = null; this.words = 0; this.buildVersion = 0;
+    this.images = new ImageCache(); this.loadingImages = false;
     this.request = 0;
     this.loading = false;
     this.error = null;
@@ -93,6 +95,7 @@ export default class MarkdownReader extends View {
     this.readTree("", cx);
     // Pane creation assigns focus after init; focus the search once it mounts.
     cx.timer.after(1, cx => { this.focusPath(); cx.notify(); });
+    cx.timer.every(250, cx => this.loadImages(cx));
     cx.timer.every(5000, cx => {
       this.watchBuild(cx);
       this.rebuild(cx);
@@ -163,6 +166,16 @@ export default class MarkdownReader extends View {
       }
     });
     return true;
+  }
+
+  // Fetches the images the last render asked for, one batch at a time.
+  loadImages(cx) {
+    if (this.loadingImages || !this.images.wanted.length) return;
+    this.loadingImages = true;
+    cx.spawn(async cx => {
+      try { if (await this.images.load()) cx.notify(); }
+      finally { this.loadingImages = false; }
+    });
   }
 
   // Herdr stops a script slice that runs too long, and a stopped build never reaches its `finally`.
@@ -401,6 +414,8 @@ export default class MarkdownReader extends View {
         this.content = text;
         this.loadedFile = file;
         this.loadedOn = on;
+        // Each open downloads web images again; a background reload keeps them.
+        if (!quiet) this.images.reset(on);
         this.rebuild(cx);
         if (!quiet) this.saveState();
         this.error = null;
@@ -567,7 +582,7 @@ export default class MarkdownReader extends View {
         .child(div().text_size(12).text_color(t.muted).child(this.error || this.buildError))))
       .child(h_flex().flex_1().min_h(0).min_w(0).border_t(1).border_color(t.border)
         .child(div().flex_1().min_w(0).min_h(0).h_full()
-          .when(!this.error && Boolean(this.doc), el => el.child(documentView(this.doc, this.style(),
+          .when(!this.error && Boolean(this.doc), el => el.child(documentView(this.doc, { ...this.style(), images: this.images },
             "reader-document-" + this.doc.key, this.width && this.width < 650 ? 16 : 28))))
         .when(this.treeVisible, el => el.child(this.fileTree())))
       .child(h_flex().px(18).py(9).gap(12).items_center().bg(t.chrome).text_size(10).text_color(t.muted)
