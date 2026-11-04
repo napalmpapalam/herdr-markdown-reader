@@ -98,8 +98,10 @@ function* chunks(text) {
 const HARD = 16000, INLINE = 8000;
 export async function lexDocument(text, key, pause, stale) {
   const lexer = new Lexer({ gfm: true, extensions: FOOTNOTES }), slice = { at: Date.now() };
+  const front = frontMatter(text.replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n"));
+  if (front.token) lexer.tokens.push(front.token);
   let words = 0, carry = "";
-  for (const chunk of chunks(text.replace(/\r\n?/g, "\n"))) {
+  for (const chunk of chunks(front.body)) {
     carry = lexChunk(lexer, carry + chunk);
     words += (chunk.match(/\S+/g) || []).length;
     if (!(await breathe(slice, pause, stale))) return null;
@@ -113,9 +115,83 @@ export async function lexDocument(text, key, pause, stale) {
   }
   lexer.inlineQueue = [];
   visit(lexer.tokens, token => {
-    if (token.type === "table") token.weights = columnWeights(token);
+    if (token.type === "table") { token.chars = columnChars(token); token.weights = token.chars.map(chars => Math.min(40, chars) + 3); }
   });
   return { items: documentItems(lexer.tokens, notes), lexer, words, text, key };
+}
+
+// GitHub draws YAML front matter (a first line `---` up to the next `---` or `...` line) as a
+// table of its top-level keys, YAML with no keys as YAML code, and an empty one as nothing.
+// Only the first HARD chars are searched, so one slice never scans or draws more.
+const FRONT_MATTER = /^---[ \t]*\n((?:.*\n)*?)(?:---|\.\.\.)[ \t]*(?:\n|$)/;
+function frontMatter(text) {
+  const match = FRONT_MATTER.exec(text.slice(0, HARD)), end = match?.[0].length;
+  // A closing line that the search cut short isn't one.
+  if (!match || (!match[0].endsWith("\n") && end < text.length && text[end] !== "\n")) return { token: null, body: text };
+  const yaml = match[1].replace(/\n$/, ""), body = text.slice(end);
+  if (!yaml.trim()) return { token: null, body };
+  const rows = yamlRows(yaml);
+  return { token: rows ? { type: "table", front: true, header: [], rows } : { type: "code", raw: match[0], text: yaml, lang: "yaml" }, body };
+}
+
+// Top-level `key: value` pairs as table cells, or null when a top-level line is something else.
+// A key takes its indented lines, and the `-` lines of a list under an empty value.
+const YAML_KEY = /^("[^"]*"|'[^']*'|(?!-(?:\s|$))[^\s#].*?):(?:[ \t]+(.*))?$/;
+function yamlRows(yaml) {
+  const entries = [];
+  for (const line of yaml.split("\n")) {
+    const last = entries.at(-1), item = /^-(?:\s|$)/.test(line) && last && !last.head;
+    if (/^[ \t]/.test(line) || !line.trim() || item) {
+      if (!last && line.trim()) return null;
+      last?.lines.push(line);
+      continue;
+    }
+    if (line.startsWith("#")) continue;
+    const pair = YAML_KEY.exec(line);
+    if (!pair) return null;
+    entries.push({ key: scalar(pair[1]), head: uncomment(pair[2] ?? ""), lines: [] });
+  }
+  return entries.length ? entries.map(({ key, head, lines }) => [cell(key), cell(...yamlValue(head, lines))]) : null;
+}
+
+// A value as cell lines: kept after `|` and under an empty value (a nested map or list), folded
+// after `>`, and joined into one line otherwise, without its quotes.
+const BLOCK_SCALAR = /^([|>])(?:[+-]?\d?|\d[+-])$/;
+function yamlValue(head, lines) {
+  const text = lines.join("\n").replace(/\s+$/, ""), rows = text ? text.split("\n") : [];
+  const indent = Math.min(...rows.filter(line => line.trim()).map(line => line.match(/^[ \t]*/)[0].length));
+  const shown = rows.map(line => (line.trim() ? line.slice(indent) : "")), block = BLOCK_SCALAR.exec(head)?.[1];
+  if (block === "|" || (!head && rows.length)) return shown;
+  if (block === ">") return fold(shown);
+  return [scalar([head, ...shown].map(line => line.trim()).filter(Boolean).join(" "))];
+}
+
+// YAML's folding: lines join with spaces, and a blank line breaks the text.
+function fold(lines) {
+  const out = [""];
+  for (const line of lines) {
+    if (!line) out.push("");
+    else out[out.length - 1] += (out.at(-1) ? " " : "") + line;
+  }
+  return out;
+}
+
+// A plain value ends at a `#` that starts it or follows a space; a quoted one keeps it for `scalar`.
+function uncomment(value) {
+  const text = value.trim();
+  return /^["']/.test(text) ? text : text.replace(/(?:^|[ \t]+)#.*$/, "");
+}
+
+function scalar(text) {
+  const quoted = /^(["'])(.*?)\1(?:[ \t]+#.*)?$/.exec(text);
+  if (quoted) return quoted[1] === "'" ? quoted[2].replaceAll("''", "'") : quoted[2];
+  return text;
+}
+
+// A table cell of plain text, one line break between `lines`.
+function cell(...lines) {
+  const tokens = lines.flatMap((line, index) => [...(index ? [{ type: "br" }] : []), { type: "text", raw: line, text: line }]);
+  return { text: lines.join("\n"), tokens, align: null };
 }
 
 async function breathe(slice, pause, stale) {
@@ -256,7 +332,7 @@ function documentItems(tokens, notes) {
   const items = [];
   for (const token of shown(tokens)) {
     if (token.type === "list") token.items.forEach((item, index) => items.push({ list: token, item, index }));
-    else if (token.type === "table") [token.header, ...token.rows].forEach((cells, index) => items.push({ table: token, cells, row: index - 1 }));
+    else if (token.type === "table") tableRows(token).forEach(({ cells, row }) => items.push({ table: token, cells, row }));
     else if (token.type === "code") {
       const rows = sourceLines(token).length;
       for (let from = 0; from < rows; from += CODE_LINES) items.push({ code: token, from, last: from + CODE_LINES >= rows });
@@ -321,7 +397,7 @@ function block(token, ctx, depth, first, extra = []) {
     case "list":
       return v_flex().w_full().mb(depth ? 0 : size).children(token.items.map((_item, index) => listItem(token, index, ctx, depth, false)));
     case "table":
-      return v_flex().w_full().children([token.header, ...token.rows].map((cells, index) => tableRow(token, cells, index - 1, ctx)));
+      return v_flex().w_full().children(tableRows(token).map(({ cells, row }) => tableRow(token, cells, row, ctx)));
     case "hr":
       return div().w_full().h(ruleSize(size)).my(size * 1.5).rounded(1).bg(palette.border);
     case "html":
@@ -422,23 +498,34 @@ function checkbox(checked, ctx) {
     .text_size(box * 0.8).line_height(1).text_color("#ffffff").child(checked ? "✓" : "");
 }
 
-// No table layout here: each column takes a share of the width by its longest cell.
-function columnWeights(token) {
-  return token.header.map((cell, column) =>
-    Math.min(40, token.rows.reduce((longest, row) => Math.max(longest, row[column]?.text.length || 0), cell.text.length)) + 3);
+// A table's rows and their index, -1 for the header. Front matter has no header row.
+function tableRows(token) {
+  const head = token.header.length ? [token.header] : [];
+  return [...head, ...token.rows].map((cells, index) => ({ cells, row: index - head.length }));
 }
 
-// One table row; `row` is -1 for the header.
+// No table layout here: each column takes a share of the width by its longest line, in chars.
+function columnChars(token) {
+  const rows = tableRows(token).map(({ cells }) => cells), longest = text => Math.max(...text.split("\n").map(line => line.length));
+  return rows[0].map((_cell, column) => rows.reduce((most, cells) => Math.max(most, longest(cells[column]?.text ?? "")), 0));
+}
+
+// One table row; `row` is -1 for the header. Front matter's keys are header cells too (`th`).
 function tableRow(token, cells, row, ctx) {
-  const { palette, size } = ctx, header = row < 0, weights = token.weights;
-  // GitHub sizes a table to its content: estimate that from the text, with room for padding.
-  const natural = weights.reduce((total, weight) => total + (weight - 3) * size * 0.6 + size * 1.6 + 1, 0);
+  const { palette, size } = ctx, header = row < 0, first = row === (token.header.length ? -1 : 0), weights = token.weights;
+  // GitHub sizes a table to its content: estimate that from the text, with room for padding. A Markdown
+  // cell counts its source, so it is capped; front matter is the text drawn, so it can reach the page width.
+  const natural = token.chars.reduce((total, chars) => total + (token.front ? chars : Math.min(40, chars)) * size * 0.6 + size * 1.6 + 1, 0);
   return h_flex().w_full().max_w(natural).items_stretch().bg(row % 2 === 1 ? palette.subtle : palette.canvas)
     .when(row === token.rows.length - 1, el => el.mb(size))
-    .children(cells.map((cell, column) => div().flex_grow(weights[column]).flex_basis(0).min_w(0)
-      .px(size * 0.8).py(size * 0.4).border_1().border_color(palette.border).ml(column ? -1 : 0).mt(header ? 0 : -1)
-      .when(header, el => el.font_weight(600))
-      .child(inline(inlined(cell.tokens, ctx), ctx, cell.align || (header ? "center" : null)))));
+    .children(cells.map((cell, column) => {
+      const th = header || (token.front && column === 0);
+      // A cell's content sits in its middle, as the `vertical-align: middle` of a table body.
+      return v_flex().justify_center().flex_grow(weights[column]).flex_basis(0).min_w(0)
+        .px(size * 0.8).py(size * 0.4).border_1().border_color(palette.border).ml(column ? -1 : 0).mt(first ? 0 : -1)
+        .when(th, el => el.font_weight(600))
+        .child(inline(inlined(cell.tokens, ctx), ctx, cell.align || (th ? "center" : null)));
+    }));
 }
 
 // Wraps inline text word by word. There is no rich-text element, so every

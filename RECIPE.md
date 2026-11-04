@@ -98,6 +98,7 @@ Open in tab carries the file, document machine, workspace folder and machine, te
 The reader draws Markdown itself in GitHub's style; its text does not support selection and copying.
 Code blocks are syntax-colored text rows that wrap at the block's width and never scroll on their own.
 A top-level quote whose first line is only `[!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]` (any case) and that has a body draws as a GitHub alert: a colored left border, an octicon and a title. Quotes in lists or in other quotes stay plain, as on GitHub.
+YAML front matter (a first line `---` up to the next `---` or `...` line, within the first 16 KB) draws as GitHub draws it: a table with one row per top-level key, the key bold. A nested map or list and a `|` block keep their lines; other values join into one line without quotes or comments. Front matter with no top-level keys draws as YAML code, and an empty one draws nothing.
 MDX components are not executed.
 
 ## Built from

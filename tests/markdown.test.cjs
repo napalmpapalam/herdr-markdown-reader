@@ -200,7 +200,7 @@ test('lexes in chunks exactly as marked lexes the whole text', async t => {
     if (Array.isArray(value) && value.pending !== undefined) { lexer.state.inRawBlock = false; lexer.inlineTokens(value.pending, value); delete value.pending; }
     for (const child of Object.values(value)) resolve(lexer, child);
   };
-  const shape = tokens => JSON.stringify(tokens.filter(token => token.type !== 'space'), (key, value) => ['raw', 'weights'].includes(key) ? undefined : value);
+  const shape = tokens => JSON.stringify(tokens.filter(token => token.type !== 'space'), (key, value) => ['raw', 'weights', 'chars'].includes(key) ? undefined : value);
   for (const sample of samples) {
     const doc = await lexDocument(sample, 'k', async () => {}, () => false);
     resolve(doc.lexer, doc.lexer.tokens);
@@ -310,4 +310,55 @@ test('ends a footnote at a block that is not lazy paragraph text', async t => {
   }
   const app = await open(t, 'A[^1]\n\n[^1]: text\nlazy line');
   assert.ok(has(notes(app)[0], 'lazy'));
+});
+
+const items = app => app.find('reader-document-' + app.reader.loadedFile).keys.length;
+const breaks = app => nodes(app, node => node.styles.h === 0 && 'w_full' in node.styles).length;
+// The bold table cell (`th`) around a word.
+const headerCell = (app, value) => nodes(app, node => node.styles.font_weight === 600 && nodes(app, n => text(n) === value, node).length)[0];
+
+test('draws YAML front matter as a table of its keys, not a rule and a heading', async t => {
+  const app = await open(t, '---\nname: ticket\ndescription: "Draft: tickets" # why\n---\n\n# Title');
+  assert.equal(items(app), 2 + 1);
+  assert.ok(headerCell(app, 'name') && headerCell(app, 'description'));
+  assert.ok(word(app, 'ticket') && word(app, 'Draft:') && word(app, 'tickets'));
+  assert.equal(headerCell(app, 'ticket'), undefined);
+  assert.equal(nodes(app, node => /why|"/.test(text(node))).length, 0);
+  assert.ok(nodes(app, node => node.styles.line_height === 1.25 && nodes(app, n => text(n) === 'Title', node).length).length);
+});
+
+test('keeps the lines of a literal or nested front matter value and folds the rest', async t => {
+  const app = await open(t, '---\nliteral: |\n  one\n  two\nnested:\n  - a\n  - b\nfolded: first\n  second\n---\nBody');
+  assert.equal(items(app), 3 + 1);
+  assert.ok(word(app, 'one') && word(app, '- a') === undefined && word(app, '-') && word(app, 'b'));
+  assert.ok(word(app, 'first') && word(app, 'second'));
+  assert.equal(breaks(app), 1 + 1);
+});
+
+test('draws front matter that has no top-level keys as YAML code', async t => {
+  const app = await open(t, '---\n- a\n- b\n---\nBody');
+  assert.equal(codeBlocks(app).length, 1);
+  assert.ok(word(app, 'Body'));
+});
+
+test('reads a rule only when the file does not open with closed front matter', async t => {
+  const app = await open(t, 'Intro\n\n---\nname: x\n---\n\n---\nopen: never closed');
+  assert.equal(nodes(app, node => node.styles.line_height === 1.25).length, 1);
+  assert.ok(word(app, 'Intro') && word(app, 'open:'));
+});
+
+test('numbers the rows of a wide table from its header', async t => {
+  const app = await open(t, '| A | B | C |\n| - | - | - |\n| 1 | 2 | 3 |\n| 4 | 5 | 6 |\n| 7 | 8 | 9 |');
+  assert.ok(headerCell(app, 'A'));
+  assert.equal(headerCell(app, '1'), undefined);
+  assert.equal(nodes(app, node => node.styles.bg === '#151b23' && 'items_stretch' in node.styles).length, 1);
+});
+
+test('reads front matter lists, comments and keys as YAML does, and an empty one as nothing', async t => {
+  const app = await open(t, '---\ntags:\n- a\n- b\ndraft: # todo\nog:image: /a.png\n"my key": v\n---\nBody');
+  assert.equal(items(app), 4 + 1);
+  assert.ok(headerCell(app, 'og:image') && headerCell(app, 'my') && word(app, 'b'));
+  assert.equal(nodes(app, node => /todo|"/.test(text(node))).length, 0);
+  const empty = await open(t, '---\n---\n\n# Page');
+  assert.equal(items(empty), 1);
 });
