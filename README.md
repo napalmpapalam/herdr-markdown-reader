@@ -46,7 +46,7 @@ Refresh updates the document, tree, and search index.
 The reader also checks an open file every five seconds.
 **Open in tab**, in the Menu of an overlay reader, keeps the file, folder, machine context, text size, and sidebar visibility.
 
-Documents are drawn in GitHub's style: its colors, type sizes and spacing, syntax-colored code blocks, tables, task lists, alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`), emoji shortcodes (`:tada:`) and footnotes (`[^1]`), in dark or light by the app's appearance.
+Documents are drawn in GitHub's style: its colors, type sizes and spacing, syntax-colored code blocks, tables, task lists, alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`), emoji shortcodes (`:tada:`), footnotes (`[^1]`) and YAML front matter as a table of its keys, in dark or light by the app's appearance.
 Text in the reader does not support selection and copying.
 Web links open in the browser.
 UTF-8 text files are limited to 1 MiB by Herdr.
