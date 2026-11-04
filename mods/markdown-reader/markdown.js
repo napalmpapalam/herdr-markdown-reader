@@ -3,6 +3,7 @@ import { div, list, svg } from "gpui-kit";
 import { h_flex, v_flex, Link, Scrollbar } from "gpui-base";
 import { languageOf, tokenize } from "./highlight.js";
 import { Lexer } from "./vendor/marked.esm.js";
+import EMOJI from "./vendor/gemoji/table.js";
 
 // GitHub's own colors (github-markdown-css), so documents look like github.com.
 const PALETTE = {
@@ -33,6 +34,8 @@ const codeSize = fontSize => Math.round(fontSize * 0.85);
 const ruleSize = fontSize => Math.max(3, fontSize * 0.25);
 const MAX_WIDTH = 820, EDGE = 18, SLICE_MS = 30;
 const HEADING_SIZES = [2, 1.5, 1.25, 1, 0.875, 0.85];
+// The share of the text size that GitHub gives to footnotes (12 px) and to superscripts.
+const SMALL = 0.75;
 // GitHub alerts: title and octicon per kind; colors are `alerts` in PALETTE, [border, title].
 const ALERTS = {
   note: { title: "Note", icon: "info" }, tip: { title: "Tip", icon: "light-bulb" },
@@ -41,6 +44,8 @@ const ALERTS = {
 };
 const ALERT_MARKER = new RegExp(`^\\[!(${Object.keys(ALERTS).join("|")})\\][ \\t]*(?:\\n|$)`, "i");
 const OCTICONS = "mods/markdown-reader/vendor/octicons";
+// GitHub's emoji shortcodes, `:name:`, in text outside code.
+const SHORTCODE = /:([a-z0-9_+-]+):/g;
 const ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ", copy: "©", reg: "®", mdash: "—", ndash: "–", hellip: "…" };
 
 function decode(text) {
@@ -50,6 +55,8 @@ function decode(text) {
     return code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
   });
 }
+
+const emojify = text => text.replace(SHORTCODE, (match, name) => EMOJI[name] ?? match);
 
 // The text of raw HTML: GitHub-style HTML is not drawn, and comments disappear.
 function htmlText(html) {
@@ -90,7 +97,7 @@ function* chunks(text) {
 // Resolves to null once `stale()` is true.
 const HARD = 16000, INLINE = 8000;
 export async function lexDocument(text, key, pause, stale) {
-  const lexer = new Lexer({ gfm: true }), slice = { at: Date.now() };
+  const lexer = new Lexer({ gfm: true, extensions: FOOTNOTES }), slice = { at: Date.now() };
   let words = 0, carry = "";
   for (const chunk of chunks(text.replace(/\r\n?/g, "\n"))) {
     carry = lexChunk(lexer, carry + chunk);
@@ -99,6 +106,7 @@ export async function lexDocument(text, key, pause, stale) {
   }
   if (carry) lexChunk(lexer, carry, true);
   for (const token of lexer.tokens) if (token.type === "blockquote") markAlert(token, lexer.inlineQueue);
+  const notes = numberFootnotes(lexer);
   for (const next of lexer.inlineQueue) {
     if (next.src.length > INLINE) next.tokens.push({ type: "text", raw: next.src, text: next.src });
     else next.tokens.pending = next.src;
@@ -107,7 +115,7 @@ export async function lexDocument(text, key, pause, stale) {
   visit(lexer.tokens, token => {
     if (token.type === "table") token.weights = columnWeights(token);
   });
-  return { items: documentItems(lexer.tokens), lexer, words, text, key };
+  return { items: documentItems(lexer.tokens, notes), lexer, words, text, key };
 }
 
 async function breathe(slice, pause, stale) {
@@ -156,6 +164,75 @@ function markAlert(quote, queue) {
   queue.find(next => next.tokens === first.tokens).src = rest;
 }
 
+// GitHub's footnotes: `[^label]` refs and `[^label]: text` definitions anywhere, labels in any case.
+// A definition keeps the lines indented by four spaces or a tab, also after blank lines, and the lazy
+// lines that continue its paragraph; it can cut a paragraph short. The first one of a label counts.
+const LABEL = "\\[\\^([^\\]\\s]+)\\]";
+const FOOTNOTE = new RegExp(`^ {0,3}${LABEL}:`), FOOTNOTE_REF = new RegExp(`^${LABEL}`), FOOTNOTE_REFS = new RegExp(LABEL, "g");
+const FOOTNOTE_START = new RegExp(`\\n {0,3}${LABEL}:`);
+const BLOCK_START = /^ {0,3}(?:#{1,6}(?:[ \t]|$)|>|[-*+][ \t]|1[.)][ \t]|```|~~~|<[A-Za-z/!?]|(?:[-*_][ \t]*){3,}$)/;
+const INDENTED = /^(?: {4}|\t)/, FENCE = /^ {0,3}(?:```|~~~)/;
+const FOOTNOTES = {
+  block: [function footnoteDef(source) {
+    const match = source.match(FOOTNOTE);
+    if (!match) return;
+    const lines = source.split("\n"), body = [lines[0].slice(match[0].length).trimStart()];
+    let end = 1, fenced = FENCE.test(body[0]);
+    while (end < lines.length) {
+      const line = noteLine(lines[end], body.at(-1), fenced);
+      if (line === null) break;
+      if (FENCE.test(line)) fenced = !fenced;
+      body.push(line);
+      end++;
+    }
+    const lexer = this.lexer, top = lexer.state.top, note = { type: "footnote", raw: lines.slice(0, end).join("\n"), tokens: [] };
+    if (end < lines.length) note.raw += "\n";
+    lexer.state.top = true;
+    lexer.blockTokens(body.join("\n"), note.tokens);
+    lexer.state.top = top;
+    const notes = lexer.footnotes ??= new Map(), label = match[1].toLowerCase();
+    if (!notes.has(label)) notes.set(label, note);
+    return note;
+  }],
+  startBlock: [source => {
+    const at = source.search(FOOTNOTE_START);
+    return at < 0 ? undefined : at + 1;
+  }],
+  // A ref without a numbered definition stays text.
+  inline: [function footnoteRef(source) {
+    const match = source.match(FOOTNOTE_REF), note = match && this.lexer.footnotes?.get(match[1].toLowerCase());
+    if (note?.number) return { type: "footnoteRef", raw: match[0], note };
+  }],
+};
+
+// A line after a definition's first line as the definition keeps it, or null where the definition
+// ends. A lazy line needs open paragraph text before it: not a blank line, a fence or a fenced line.
+function noteLine(line, previous, fenced) {
+  if (BLANK.test(line)) return "";
+  if (INDENTED.test(line)) return line.replace(INDENTED, "");
+  const paragraph = Boolean(previous.trim()) && !fenced && !FENCE.test(previous);
+  const lazy = paragraph && !FOOTNOTE.test(line) && !BLOCK_START.test(line);
+  return lazy ? line : null;
+}
+
+// Numbers the defined footnotes by their first ref, in document order, before any inline text is lexed,
+// and counts each one's refs. Code spans, HTML, autolinks and escaped brackets hold no refs.
+// Returns the notes in number order.
+function numberFootnotes(lexer) {
+  const notes = lexer.footnotes, order = [];
+  if (!notes) return order;
+  for (const next of lexer.inlineQueue) {
+    if (next.src.length > INLINE) continue;
+    for (const [, label] of next.src.replace(/(`+)[\s\S]*?\1|<[^>\n]*>|\\./g, "").matchAll(FOOTNOTE_REFS)) {
+      const note = notes.get(label.toLowerCase());
+      if (!note) continue;
+      if (!note.number) { order.push(note); note.number = order.length; }
+      note.refs = (note.refs || 0) + 1;
+    }
+  }
+  return order;
+}
+
 // Too long to lex in one slice: monospaced text.
 function plain(tokens, source) {
   const text = source.replace(/\n+$/, "");
@@ -174,8 +251,8 @@ function inlined(tokens, ctx) {
 }
 
 // Top-level blocks for the lazy list. Lists and tables split into one item per list item and row,
-// code into CODE_LINES rows per item, so a long one costs only its visible part.
-function documentItems(tokens) {
+// code into CODE_LINES rows per item, so a long one costs only its visible part. Footnotes go last.
+function documentItems(tokens, notes) {
   const items = [];
   for (const token of shown(tokens)) {
     if (token.type === "list") token.items.forEach((item, index) => items.push({ list: token, item, index }));
@@ -186,10 +263,11 @@ function documentItems(tokens) {
     }
     else items.push({ token });
   }
+  notes.forEach((note, index) => items.push({ note, first: index === 0 }));
   return items;
 }
 
-const shown = tokens => tokens.filter(token => token.type !== "space" && token.type !== "def" && (token.type !== "html" || plainHtml(token)));
+const shown = tokens => tokens.filter(token => token.type !== "space" && token.type !== "def" && token.type !== "footnote" && (token.type !== "html" || plainHtml(token)));
 const plainHtml = token => (token.plainText ??= htmlText(token.text));
 
 // The document as a lazy list: GPUI describes and lays out only the blocks on screen.
@@ -210,6 +288,7 @@ function documentItem(item, ctx, first) {
   if (item.list) return listItem(item.list, item.index, ctx, 0, item.index === item.list.items.length - 1);
   if (item.table) return tableRow(item.table, item.cells, item.row, ctx);
   if (item.code) return codeBlock(item.code, ctx, item.from, item.from + CODE_LINES, item.last);
+  if (item.note) return footnote(item.note, ctx, item.first);
   return block(item.token, ctx, 0, first);
 }
 
@@ -217,7 +296,8 @@ function blocks(tokens, ctx, depth) {
   return shown(tokens).map((token, index) => block(token, ctx, depth, index === 0));
 }
 
-function block(token, ctx, depth, first) {
+// `extra` are inline pieces drawn at the end of a paragraph.
+function block(token, ctx, depth, first, extra = []) {
   const { palette, size } = ctx, gap = size;
   switch (token.type) {
     case "heading": {
@@ -228,7 +308,7 @@ function block(token, ctx, depth, first) {
         .child(inline(inlined(token.tokens, ctx), ctx));
     }
     case "paragraph":
-      return div().w_full().mb(gap).child(inline(inlined(token.tokens, ctx), ctx));
+      return div().w_full().mb(gap).child(inline(inlined(token.tokens, ctx), ctx, null, extra));
     case "text":
       return div().w_full().child(inline(token.tokens ? inlined(token.tokens, ctx) : [token], ctx));
     case "code":
@@ -260,6 +340,26 @@ function alert(token, ctx, depth) {
       .child(svg(`${OCTICONS}/${kind.icon}.svg`).size(size).flex_none().mr(size * 0.5).text_color(color))
       .child(kind.title))
     .child(v_flex().w_full().mb(-size).children(blocks(token.tokens, ctx, depth)));
+}
+
+// GitHub's footnotes section: small muted text under a rule, without a visible title. Each note ends
+// in links back to its refs, ↩, ↩², ..., inside its last paragraph or else under its last block.
+function footnote(note, ctx, first) {
+  const { palette, size } = ctx, small = { ...ctx, size: Math.round(size * SMALL) }, backrefs = backrefPieces(note);
+  const body = shown(note.tokens), last = body.at(-1)?.type === "paragraph";
+  return h_flex().w_full().items_start().text_size(small.size).text_color(palette.muted)
+    .when(first, el => el.pt(size).border_t(1).border_color(palette.border))
+    .child(h_flex().w(size).flex_shrink_0().justify_end().pr(small.size * 0.4).child(`${note.number}.`))
+    .child(v_flex().flex_1().min_w(0)
+      .children(body.map((token, index) => block(token, small, 1, index === 0, last && index === body.length - 1 ? backrefs : [])))
+      .when(!last, el => el.child(div().w_full().mb(small.size).child(inline([], small, null, backrefs)))));
+}
+
+// ↩ for the first ref, ↩² for the second, and so on.
+function backrefPieces(note) {
+  const link = `#fnref-${note.number}`;
+  return Array.from({ length: note.refs }, (_, index) => index).flatMap(index =>
+    [{ text: " ↩", style: { link } }, ...(index ? [{ text: String(index + 1), style: { link, sup: true } }] : [])]);
 }
 
 // Code is drawn as text rows, not as a read-only Editor: an Editor scrolls past its last line
@@ -343,9 +443,10 @@ function tableRow(token, cells, row, ctx) {
 
 // Wraps inline text word by word. There is no rich-text element, so every
 // whitespace-free run of styled pieces is one flex item in a wrapping row.
-function inline(tokens, ctx, align = null) {
+function inline(tokens, ctx, align = null, extra = []) {
   const pieces = [];
   flatten(tokens, {}, pieces);
+  pieces.push(...extra);
   const words = [], space = ctx.size * 0.28;
   let word = [];
   const flush = () => { if (word.length) words.push(h_flex().flex_none().items_baseline().mr(space).children(word)); word = []; };
@@ -372,7 +473,8 @@ function flatten(tokens, style, out) {
       case "strong": flatten(token.tokens, { ...style, bold: true }, out); break;
       case "em": flatten(token.tokens, { ...style, italic: true }, out); break;
       case "del": flatten(token.tokens, { ...style, strike: true }, out); break;
-      case "link": flatten(token.tokens, { ...style, link: token.href }, out); break;
+      // An autolink shows its address as written, without emoji.
+      case "link": flatten(token.tokens, { ...style, link: token.href, verbatim: token.text === token.href }, out); break;
       case "codespan": out.push({ text: token.text, style: { ...style, code: true } }); break;
       case "br": out.push({ br: true }); break;
       // A loose task item keeps its checkbox inside the first paragraph; the marker draws it.
@@ -380,7 +482,8 @@ function flatten(tokens, style, out) {
       // Inline tags are dropped and the text between them stays.
       case "html": if (/^<br\s*\/?>$/i.test(token.text)) out.push({ br: true }); break;
       case "image": out.push({ text: token.text || token.href, style: { ...style, link: style.link || token.href } }); break;
-      case "text": token.tokens ? flatten(token.tokens, style, out) : out.push({ text: decode(token.text), style }); break;
+      case "footnoteRef": out.push({ text: `[${token.note.number}]`, style: { ...style, link: `#fn-${token.note.number}`, sup: true } }); break;
+      case "text": token.tokens ? flatten(token.tokens, style, out) : out.push({ text: style.verbatim ? decode(token.text) : emojify(decode(token.text)), style }); break;
       default: out.push({ text: decode(token.text ?? token.raw ?? ""), style });
     }
   }
@@ -398,5 +501,7 @@ function styled(text, style, ctx) {
     .when(Boolean(style.bold), el => el.font_weight(600))
     .when(Boolean(style.italic), el => el.italic())
     .when(Boolean(style.strike), el => el.line_through())
-    .when(Boolean(style.link), el => el.text_color(palette.accent));
+    .when(Boolean(style.link), el => el.text_color(palette.accent))
+    // GitHub's superscript: 75% text, raised by half its height, so the line keeps its height.
+    .when(Boolean(style.sup), el => el.relative().top(-size * SMALL / 2).text_size(size * SMALL));
 }

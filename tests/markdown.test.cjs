@@ -248,3 +248,66 @@ test('cuts the marker from an alert body too long to style', async t => {
   assert.ok(word(app, 'Tip'));
   assert.equal(nodes(app, node => /\[!/.test(text(node))).length, 0);
 });
+
+test('draws emoji shortcodes in text, links, headings and tables', async t => {
+  const app = await open(t, '# Hi :wave:\n\nShip :+1: :white_check_mark: [go :rocket:](https://example.com)\n\n| A |\n| - |\n| :fire: |');
+  assert.ok(word(app, '👋') && word(app, '👍') && word(app, '✅') && word(app, '🔥'));
+  assert.equal(word(app, '🚀').styles.href, 'https://example.com');
+});
+
+test('keeps unknown shortcodes, code and autolink addresses as written', async t => {
+  const app = await open(t, ':nope: :SMILE: `:smile:` <https://example.com/:smile:>');
+  assert.ok(word(app, ':nope:') && word(app, ':SMILE:') && word(app, ':smile:'));
+  assert.ok(word(app, 'https://example.com/:smile:'));
+});
+
+// The footnote items, after the document's own blocks: rows in the 12 px footnote text.
+const notes = app => nodes(app, node => node.type === 'row' && node.styles.text_size === 12);
+const has = (node, value) => nodes(null, child => text(child) === value, node).length;
+const refs = app => nodes(app, node => /^\[\d+\]$/.test(text(node))).map(text);
+
+test('numbers footnotes by first ref and keeps undefined refs as text', async t => {
+  const app = await open(t, 'One[^b] two[^A] three[^b] four[^zz].\n\n[^a]: Note A.\n[^b]: Note B.\n[^unused]: Never shown.');
+  assert.deepEqual(refs(app), ['[1]', '[2]', '[1]']);
+  assert.ok(word(app, 'four[^zz].'));
+  const [first, second] = notes(app);
+  assert.ok(has(first, 'B.') && has(second, 'A.'));
+  assert.equal(notes(app).length, 2);
+  assert.equal(nodes(app, node => text(node) === 'Never').length, 0);
+});
+
+test('draws footnotes under a rule, with superscript refs and links back', async t => {
+  const app = await open(t, 'One[^a] two[^a]\n\n[^a]: Note\n    more');
+  const ref = word(app, '[1]');
+  assert.ok('relative' in ref.styles && ref.styles.text_color === '#4493f8' && ref.styles.text_size === 12);
+  const [note] = notes(app);
+  assert.equal(note.styles.border_t, 1);
+  assert.ok(has(note, 'more'));
+  assert.equal(has(note, '↩'), 2);
+  assert.ok(has(note, '2'));
+});
+
+test('does not number escaped refs or refs in autolinks and HTML', async t => {
+  const app = await open(t, 'A \\[^1] <https://x.example/[^1]> <span title="[^1]">s</span> B[^2]\n\n[^1]: one\n[^2]: two');
+  assert.deepEqual(refs(app), ['[1]']);
+  assert.equal(notes(app).length, 1);
+  assert.ok(has(notes(app)[0], 'two'));
+});
+
+test('reads a footnote that cuts a paragraph, sits in a quote, or starts on the next line', async t => {
+  const app = await open(t, 'Para[^a] text\n[^a]: cuts in\n\n> quote[^c]\n\n> [^c]: in quote\n\nLast[^d]\n\n[^d]:\n\n    - listed');
+  assert.equal(nodes(app, node => /^\[\^/.test(text(node))).length, 0);
+  const [a, c, d] = notes(app);
+  assert.ok(has(a, 'cuts') && has(c, 'quote') && has(d, 'listed') && has(d, '↩'));
+});
+
+test('ends a footnote at a block that is not lazy paragraph text', async t => {
+  for (const [source, outside] of [['[^1]: text\n***\nafter', 'after'], ['[^1]:\nfoo', 'foo'],
+    ['[^1]: x\n    ```\n    code\n    ```\nlazy', 'lazy'], ['[^1]: x\n    ```\n    code\nlazy', 'lazy'], ['[^1]: text\n<div>x</div>', 'x']]) {
+    const app = await open(t, 'A[^1]\n\n' + source);
+    assert.equal(has(notes(app)[0], outside), 0, source);
+    assert.ok(word(app, outside), source);
+  }
+  const app = await open(t, 'A[^1]\n\n[^1]: text\nlazy line');
+  assert.ok(has(notes(app)[0], 'lazy'));
+});
