@@ -14,6 +14,7 @@ const { iconFile } = new Function('ICONS', moduleSource('icons.js') + '\nreturn 
 const { Lexer } = new Function(fs.readFileSync(path.join(mod, 'vendor/marked.esm.js'), 'utf8')
   .replace(/export\{([^}]*)\};?/, (_match, names) => 'return {' + names.replace(/(\w+) as (\w+)/g, '$2: $1') + '};'))();
 if (typeof Lexer?.lex !== 'function') throw new Error('Cannot load the vendored marked lexer');
+const EMOJI = new Function(moduleSource('vendor/gemoji/table.js').replace(/^default /m, 'return '))();
 const highlight = new Function(moduleSource('highlight.js') + '\nreturn { languageOf, tokenize };')();
 // Fails on a `boom` fence, so tests can reach the reader's build-error path.
 class BoomLexer extends Lexer {
@@ -75,10 +76,10 @@ function createReader({ root, properties = {}, appearance = { dark: true, font_f
     node.kids.push(...node.keys.map((_key, i) => render(i, cx)));
     return node;
   };
-  const markdown = new Function('div', 'list', 'svg', 'h_flex', 'v_flex', 'Link', 'Scrollbar', 'languageOf', 'tokenize', 'Lexer',
+  const markdown = new Function('div', 'list', 'svg', 'h_flex', 'v_flex', 'Link', 'Scrollbar', 'languageOf', 'tokenize', 'Lexer', 'EMOJI',
     moduleSource('markdown.js') + '\nreturn { lexDocument, documentView };')(
     () => element('div'), list, file => element('svg', file), () => element('row'), () => element('column'),
-    { new: id => element('link', id) }, { vertical: () => element('scrollbar') }, highlight.languageOf, highlight.tokenize, BoomLexer);
+    { new: id => element('link', id) }, { vertical: () => element('scrollbar') }, highlight.languageOf, highlight.tokenize, BoomLexer, EMOJI);
   const bindings = {
     View: class {}, div: () => element('div'), svg: file => element('svg', file), image: file => element('image', file),
     h_flex: () => element('row'), v_flex: () => element('column'),

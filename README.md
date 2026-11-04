@@ -46,7 +46,7 @@ Refresh updates the document, tree, and search index.
 The reader also checks an open file every five seconds.
 **Open in tab**, in the Menu of an overlay reader, keeps the file, folder, machine context, text size, and sidebar visibility.
 
-Documents are drawn in GitHub's style: its colors, type sizes and spacing, syntax-colored code blocks, tables, task lists, and alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`), in dark or light by the app's appearance.
+Documents are drawn in GitHub's style: its colors, type sizes and spacing, syntax-colored code blocks, tables, task lists, alerts (`> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`), emoji shortcodes (`:tada:`) and footnotes (`[^1]`), in dark or light by the app's appearance.
 Text in the reader does not support selection and copying.
 Web links open in the browser.
 UTF-8 text files are limited to 1 MiB by Herdr.
@@ -100,6 +100,12 @@ They live in `mods/markdown-reader/vendor/material-icon-theme/`, with the theme'
 To vendor them again, run `node tools/build-icons.mjs` from the repository root; it needs npm and tar.
 
 GitHub alerts (`> [!NOTE]` and the others) use five icons from [Primer Octicons](https://github.com/primer/octicons) 19.15.0 (MIT), in `mods/markdown-reader/vendor/octicons/` with their license.
+
+## Emoji
+
+Emoji shortcodes come from [gemoji](https://github.com/wooorm/gemoji) 8.1.0 (MIT), as a table in `mods/markdown-reader/vendor/gemoji/` with its license.
+GitHub's image-only emoji, such as `:octocat:`, stay as text.
+To vendor the table again, run `node tools/build-emoji.mjs` from the repository root; it needs npm and tar.
 
 See [RECIPE.md](RECIPE.md) for the build brief.
 No personal layouts, settings, saved state, or documents are included.
