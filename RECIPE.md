@@ -7,7 +7,7 @@ It starts in the selected terminal's folder and provides an expandable file tree
 
 ## What you see
 
-The dialog is 90% of the window width and 85% of its height.
+The dialog is 75% of the window width and 85% of its height.
 A tab or split pane fills its available space.
 All surfaces, borders, and text use Herdr theme colors.
 
